@@ -1,0 +1,67 @@
+version: '3'
+
+vars:
+  MVNW: '{{if eq OS "windows"}}cmd /c mvnw.cmd{{else}}./mvnw{{end}}'
+
+tasks:
+  default:
+    desc: List all available tasks
+    cmds:
+      - task --list-all
+
+  clean:
+    desc: Clean the project
+    cmds:
+      - '{{.MVNW}} clean'
+
+  format:
+    desc: Format Java sources with Spring Java Format
+    cmds:
+      - '{{.MVNW}} spring-javaformat:apply'
+
+  format-check:
+    desc: Check Java source formatting
+    cmds:
+      - '{{.MVNW}} validate'
+
+  test:
+    desc: Run all tests
+    cmds:
+      - '{{.MVNW}} test'
+
+  verify:
+    desc: Run the complete CI verification build
+    cmds:
+      - '{{.MVNW}} clean verify'
+
+  package:
+    desc: Build all project artifacts
+    cmds:
+      - '{{.MVNW}} clean package'
+
+  ui:
+    desc: Build and start the Swing UI
+    cmds:
+      - '{{.MVNW}} -pl observer-ui -am package'
+      - java -jar observer-ui/target/observer-ui.jar
+
+  demo-ui:
+    desc: Build and start the Swing UI in listener mode for the demo
+    cmds:
+      - '{{.MVNW}} -pl observer-ui -am package'
+      - java -jar observer-ui/target/observer-ui.jar --listen --port=4561
+
+  demo-up:
+    desc: Build and start the PostgreSQL demo stack
+    cmds:
+      - docker compose -f observer-demo/compose.yaml up --build
+
+  demo-down:
+    desc: Stop and remove the PostgreSQL demo stack
+    cmds:
+      - docker compose -f observer-demo/compose.yaml down
+
+  demo-logs:
+    desc: Follow the PostgreSQL demo logs
+    cmds:
+      - docker compose -f observer-demo/compose.yaml logs --follow

@@ -1,0 +1,187 @@
+package ch.rasc.jdbcobserver.ui;
+
+import ch.rasc.jdbcobserver.core.SqlEvent;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import javax.swing.table.AbstractTableModel;
+
+final class EventTableModel extends AbstractTableModel {
+
+	private static final String[] COLUMNS = { "Time", "Type", "Pattern", "Execute", "Fetch", "Result use", "Rows",
+			"Timeout", "Auto commit", "Isolation", "Connection", "Thread", "Call site", "SQL", "Status" };
+
+	private final List<SqlEvent> events = new ArrayList<>();
+
+	private final int limit;
+
+	private final NPlusOneDetector nPlusOneDetector = new NPlusOneDetector();
+
+	private double totalDurationMillis;
+
+	private long failedCount;
+
+	private long rowCount;
+
+	EventTableModel() {
+		this(Math.max(1, Integer.getInteger("maxLoggedStatements", 20_000)));
+	}
+
+	EventTableModel(int limit) {
+		if (limit < 1) {
+			throw new IllegalArgumentException("History limit must be positive");
+		}
+		this.limit = limit;
+	}
+
+	void add(SqlEvent event) {
+		addAll(List.of(event));
+	}
+
+	void addAll(Collection<SqlEvent> additions) {
+		if (additions.isEmpty()) {
+			return;
+		}
+		for (var event : additions) {
+			this.events.add(event);
+			this.nPlusOneDetector.add(event);
+			addMetrics(event);
+		}
+		while (this.events.size() > this.limit) {
+			var removed = this.events.removeFirst();
+			this.nPlusOneDetector.remove(removed);
+			removeMetrics(removed);
+		}
+		fireTableDataChanged();
+	}
+
+	void clear() {
+		this.events.clear();
+		this.nPlusOneDetector.clear();
+		this.totalDurationMillis = 0;
+		this.failedCount = 0;
+		this.rowCount = 0;
+		fireTableDataChanged();
+	}
+
+	SqlEvent get(int row) {
+		return this.events.get(row);
+	}
+
+	List<SqlEvent> all() {
+		return List.copyOf(this.events);
+	}
+
+	double totalDurationMillis() {
+		return this.totalDurationMillis;
+	}
+
+	long failedCount() {
+		return this.failedCount;
+	}
+
+	long observedRowCount() {
+		return this.rowCount;
+	}
+
+	int nPlusOneThreshold() {
+		return this.nPlusOneDetector.threshold();
+	}
+
+	long nPlusOneWindowMillis() {
+		return this.nPlusOneDetector.windowMillis();
+	}
+
+	void configureNPlusOne(int threshold, long windowMillis) {
+		this.nPlusOneDetector.configure(threshold, windowMillis, this.events);
+		fireTableDataChanged();
+	}
+
+	int trackedNPlusOneEventCount() {
+		return this.nPlusOneDetector.trackedEventCount();
+	}
+
+	@Override
+	public int getRowCount() {
+		return this.events.size();
+	}
+
+	@Override
+	public int getColumnCount() {
+		return COLUMNS.length;
+	}
+
+	@Override
+	public String getColumnName(int column) {
+		return COLUMNS[column];
+	}
+
+	@Override
+	public Class<?> getColumnClass(int column) {
+		return switch (column) {
+			case 0 -> Instant.class;
+			case 1 -> SqlEvent.Kind.class;
+			case 3, 4, 5 -> Double.class;
+			case 6 -> Long.class;
+			case 7 -> Integer.class;
+			case 8 -> Boolean.class;
+			default -> String.class;
+		};
+	}
+
+	@Override
+	public Object getValueAt(int row, int column) {
+		var event = this.events.get(row);
+		return switch (column) {
+			case 0 -> event.timestamp();
+			case 1 -> event.kind();
+			case 2 -> this.nPlusOneDetector.repetitions(event.id()) == 0 ? ""
+					: "N+1 \u00d7" + this.nPlusOneDetector.repetitions(event.id());
+			case 3 -> event.durationNanos() == 0 ? null : event.durationMillis();
+			case 4 -> event.fetchNanos() == 0 ? null : event.fetchMillis();
+			case 5 -> event.resultSetUseNanos() == 0 ? null : event.resultSetUseMillis();
+			case 6 -> event.rows() < 0 ? null : event.rows();
+			case 7 -> event.queryTimeout() == 0 ? null : event.queryTimeout();
+			case 8 -> event.kind() == SqlEvent.Kind.RESULT_SET ? null : event.autoCommit();
+			case 9 -> isolation(event.transactionIsolation());
+			case 10 -> event.connection();
+			case 11 -> event.thread();
+			case 12 -> event.callSite();
+			case 13 -> event.sql().isBlank() ? event.rawSql() : event.sql();
+			default -> event.success() ? "OK" : "FAILED";
+		};
+	}
+
+	private void addMetrics(SqlEvent event) {
+		this.totalDurationMillis += event.durationMillis();
+		if (!event.success()) {
+			this.failedCount++;
+		}
+		if (event.kind() == SqlEvent.Kind.RESULT_SET && event.rows() > 0) {
+			this.rowCount += event.rows();
+		}
+	}
+
+	private void removeMetrics(SqlEvent event) {
+		this.totalDurationMillis -= event.durationMillis();
+		if (!event.success()) {
+			this.failedCount--;
+		}
+		if (event.kind() == SqlEvent.Kind.RESULT_SET && event.rows() > 0) {
+			this.rowCount -= event.rows();
+		}
+	}
+
+	private static String isolation(int isolation) {
+		return switch (isolation) {
+			case 0 -> "None";
+			case 1 -> "Read uncommitted";
+			case 2 -> "Read committed";
+			case 4 -> "Repeatable read";
+			case 8 -> "Serializable";
+			default -> Integer.toString(isolation);
+		};
+	}
+
+}

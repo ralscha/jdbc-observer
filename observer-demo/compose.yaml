@@ -1,0 +1,41 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: observer
+      POSTGRES_USER: observer
+      POSTGRES_PASSWORD: observer
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U observer -d observer"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  demo:
+    build:
+      context: ..
+      dockerfile: observer-demo/Dockerfile
+    environment:
+      JDBC_URL: jdbc:postgresql://postgres:5432/observer
+      JDBC_USERNAME: observer
+      JDBC_PASSWORD: observer
+    ports:
+      - "8080:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/demo || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+volumes:
+  postgres-data:

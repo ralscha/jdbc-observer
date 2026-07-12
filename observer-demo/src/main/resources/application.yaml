@@ -1,0 +1,20 @@
+spring:
+  application:
+    name: jdbc-observer-demo
+  datasource:
+    url: ${JDBC_URL:jdbc:postgresql://localhost:5432/observer}
+    username: ${JDBC_USERNAME:observer}
+    password: ${JDBC_PASSWORD:observer}
+    hikari:
+      pool-name: observer-demo-pool
+      maximum-pool-size: 8
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        format_sql: false
+
+server:
+  port: ${SERVER_PORT:8080}
