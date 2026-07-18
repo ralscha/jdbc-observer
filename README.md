@@ -2,6 +2,8 @@
 
 A modern, zero-configuration Java 25 agent and Swing console for live JDBC SQL telemetry. It instruments JDBC drivers and data sources directly with the standard Java Class-File API, so applications keep their real JDBC URL, driver, and pool configuration without an instrumentation framework or proxy driver.
 
+![JDBC Observer showing live SQL telemetry and N+1 query detection](docs/images/jdbc-observer.png)
+
 ## Build and run
 
 ```shell
