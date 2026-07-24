@@ -79,6 +79,8 @@ public final class ObserverApp extends JFrame {
 
 	private final JTable table = new JTable(this.model);
 
+	private final JScrollPane tableScrollPane = new JScrollPane(this.table);
+
 	private final TableRowSorter<EventTableModel> sorter = new TableRowSorter<>(this.model);
 
 	private final JTextArea detail = new JTextArea();
@@ -102,6 +104,8 @@ public final class ObserverApp extends JFrame {
 	private final JCheckBox sqlStatementsOnly = new JCheckBox("SQL statements only");
 
 	private final JCheckBox highlightMatches = new JCheckBox("Highlight", true);
+
+	private final JCheckBox autoScroll = new JCheckBox("Auto-scroll", true);
 
 	private final int port;
 
@@ -170,6 +174,12 @@ public final class ObserverApp extends JFrame {
 		this.minimumDuration.addChangeListener(event -> applyFilter());
 		this.sqlStatementsOnly.addActionListener(event -> applyFilter());
 		this.highlightMatches.addActionListener(event -> this.table.repaint());
+		this.autoScroll.setToolTipText("Keep the latest event visible as new events arrive");
+		this.autoScroll.addActionListener(event -> {
+			if (this.autoScroll.isSelected()) {
+				scrollToLatestEvent();
+			}
+		});
 		var bar = new JPanel(new BorderLayout(8, 0));
 		bar.add(this.filter);
 		var buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
@@ -177,6 +187,7 @@ public final class ObserverApp extends JFrame {
 		buttons.add(this.minimumDuration);
 		buttons.add(this.sqlStatementsOnly);
 		buttons.add(this.highlightMatches);
+		buttons.add(this.autoScroll);
 		buttons.add(pause);
 		buttons.add(clear);
 		buttons.add(theme);
@@ -200,8 +211,7 @@ public final class ObserverApp extends JFrame {
 		this.detail.setLineWrap(true);
 		this.detail.setWrapStyleWord(true);
 		this.detail.setBorder(new EmptyBorder(12, 12, 12, 12));
-		var split = new JSplitPane(JSplitPane.VERTICAL_SPLIT, new JScrollPane(this.table),
-				new JScrollPane(this.detail));
+		var split = new JSplitPane(JSplitPane.VERTICAL_SPLIT, this.tableScrollPane, new JScrollPane(this.detail));
 		split.setResizeWeight(.72);
 		split.setBorder(null);
 		var center = new JPanel(new BorderLayout(0, 10));
@@ -317,8 +327,22 @@ public final class ObserverApp extends JFrame {
 		}
 		this.model.addAll(additions);
 		if (!additions.isEmpty()) {
+			scrollToLatestEvent();
 			updateMetrics();
 		}
+	}
+
+	private void scrollToLatestEvent() {
+		if (!this.autoScroll.isSelected() || this.model.getRowCount() == 0) {
+			return;
+		}
+		int modelRow = this.model.getRowCount() - 1;
+		int viewRow = this.table.convertRowIndexToView(modelRow);
+		if (viewRow < 0) {
+			return;
+		}
+		var bounds = this.table.getCellRect(viewRow, 0, true);
+		this.table.scrollRectToVisible(bounds);
 	}
 
 	private void setStatus(String text, Color color) {
