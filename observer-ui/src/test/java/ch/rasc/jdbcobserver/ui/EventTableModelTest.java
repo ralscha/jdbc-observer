@@ -36,10 +36,31 @@ class EventTableModelTest {
 		}
 	}
 
+	@Test
+	void mergesResultSetIntoItsParentStatementRow() {
+		var model = new EventTableModel(10);
+		model.add(event(1, "select ?", true));
+		model.add(resultSetEvent(2, 1, 7, true));
+
+		assertEquals(1, model.getRowCount());
+		assertEquals("Statement", model.getValueAt(0, 1));
+		assertEquals(1.0, (Double) model.getValueAt(0, 3), 0.000_001);
+		assertEquals(2.0, (Double) model.getValueAt(0, 4), 0.000_001);
+		assertEquals(4.0, (Double) model.getValueAt(0, 5), 0.000_001);
+		assertEquals(7L, model.getValueAt(0, 6));
+		assertEquals(7, model.observedRowCount());
+	}
+
 	private static SqlEvent event(long id, String fingerprint, boolean success) {
 		return new SqlEvent(id, 0, 1, Instant.ofEpochSecond(id), "worker", "connection", SqlEvent.Kind.QUERY, "select",
-				"select", Map.of(), Map.of(), id * 1_000_000, 0, 0, id, success, success ? "" : "failed", 0, true, 2,
+				"select", Map.of(), Map.of(), id * 1_000_000, 0, 0, -1, success, success ? "" : "failed", 0, true, 2,
 				"jdbc:test", "", fingerprint, "example.Repository.find(Repository.java:42)", "");
+	}
+
+	private static SqlEvent resultSetEvent(long id, long parentId, long rows, boolean success) {
+		return new SqlEvent(id, parentId, 1, Instant.ofEpochSecond(id), "worker", "connection",
+				SqlEvent.Kind.RESULT_SET, "", "", Map.of(), Map.of(), 0, 2_000_000, 4_000_000, rows, success,
+				success ? "" : "failed", 0, true, 2, "jdbc:test", "", "", "", "");
 	}
 
 }

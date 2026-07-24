@@ -44,6 +44,9 @@ final class EventTableModel extends AbstractTableModel {
 			return;
 		}
 		for (var event : additions) {
+			if (event.kind() == SqlEvent.Kind.RESULT_SET && event.parentId() > 0 && mergeResultSet(event)) {
+				continue;
+			}
 			this.events.add(event);
 			this.nPlusOneDetector.add(event);
 			addMetrics(event);
@@ -121,7 +124,7 @@ final class EventTableModel extends AbstractTableModel {
 	public Class<?> getColumnClass(int column) {
 		return switch (column) {
 			case 0 -> Instant.class;
-			case 1 -> SqlEvent.Kind.class;
+			case 1 -> String.class;
 			case 3, 4, 5 -> Double.class;
 			case 6 -> Long.class;
 			case 7 -> Integer.class;
@@ -135,7 +138,7 @@ final class EventTableModel extends AbstractTableModel {
 		var event = this.events.get(row);
 		return switch (column) {
 			case 0 -> event.timestamp();
-			case 1 -> event.kind();
+			case 1 -> typeLabel(event.kind());
 			case 2 -> this.nPlusOneDetector.repetitions(event.id()) == 0 ? ""
 					: "N+1 \u00d7" + this.nPlusOneDetector.repetitions(event.id());
 			case 3 -> event.durationNanos() == 0 ? null : event.durationMillis();
@@ -158,7 +161,7 @@ final class EventTableModel extends AbstractTableModel {
 		if (!event.success()) {
 			this.failedCount++;
 		}
-		if (event.kind() == SqlEvent.Kind.RESULT_SET && event.rows() > 0) {
+		if (event.rows() > 0) {
 			this.rowCount += event.rows();
 		}
 	}
@@ -168,9 +171,55 @@ final class EventTableModel extends AbstractTableModel {
 		if (!event.success()) {
 			this.failedCount--;
 		}
-		if (event.kind() == SqlEvent.Kind.RESULT_SET && event.rows() > 0) {
+		if (event.rows() > 0) {
 			this.rowCount -= event.rows();
 		}
+	}
+
+	private boolean mergeResultSet(SqlEvent resultSetEvent) {
+		int statementIndex = findById(resultSetEvent.parentId());
+		if (statementIndex < 0) {
+			return false;
+		}
+		var statementEvent = this.events.get(statementIndex);
+		if (!statementEvent.kind().isSqlStatement()) {
+			return false;
+		}
+		var merged = merge(statementEvent, resultSetEvent);
+		this.events.set(statementIndex, merged);
+		removeMetrics(statementEvent);
+		addMetrics(merged);
+		return true;
+	}
+
+	private int findById(long eventId) {
+		for (int index = this.events.size() - 1; index >= 0; index--) {
+			if (this.events.get(index).id() == eventId) {
+				return index;
+			}
+		}
+		return -1;
+	}
+
+	private static SqlEvent merge(SqlEvent statementEvent, SqlEvent resultSetEvent) {
+		var success = statementEvent.success() && resultSetEvent.success();
+		var error = statementEvent.error();
+		if (!resultSetEvent.error().isBlank()) {
+			error = resultSetEvent.error();
+		}
+		var rows = resultSetEvent.rows() >= 0 ? resultSetEvent.rows() : statementEvent.rows();
+		var fetchNanos = Math.max(statementEvent.fetchNanos(), resultSetEvent.fetchNanos());
+		var resultSetUseNanos = Math.max(statementEvent.resultSetUseNanos(), resultSetEvent.resultSetUseNanos());
+		var stackTrace = statementEvent.stackTrace().isBlank() ? resultSetEvent.stackTrace()
+				: statementEvent.stackTrace();
+		return new SqlEvent(statementEvent.id(), statementEvent.parentId(), statementEvent.transactionId(),
+				statementEvent.timestamp(), statementEvent.thread(), statementEvent.connection(), statementEvent.kind(),
+				statementEvent.rawSql(), statementEvent.sql(), statementEvent.parameters(),
+				statementEvent.parameterMethods(), statementEvent.durationNanos(), fetchNanos, resultSetUseNanos, rows,
+				success, error, statementEvent.queryTimeout(), statementEvent.autoCommit(),
+				statementEvent.transactionIsolation(), statementEvent.connectionUrl(),
+				statementEvent.connectionProperties(), statementEvent.fingerprint(), statementEvent.callSite(),
+				stackTrace);
 	}
 
 	private static String isolation(int isolation) {
@@ -181,6 +230,23 @@ final class EventTableModel extends AbstractTableModel {
 			case 4 -> "Repeatable read";
 			case 8 -> "Serializable";
 			default -> Integer.toString(isolation);
+		};
+	}
+
+	private static String typeLabel(SqlEvent.Kind kind) {
+		return switch (kind) {
+			case QUERY, UPDATE, EXECUTE, BATCH -> "Statement";
+			case RESULT_SET -> "Result set";
+			case CONNECTION -> "Connection open";
+			case CONNECTION_CLOSE -> "Connection close";
+			case TRANSACTION_BEGIN -> "Transaction begin";
+			case SAVEPOINT -> "Savepoint";
+			case SAVEPOINT_ROLLBACK -> "Savepoint rollback";
+			case SAVEPOINT_RELEASE -> "Savepoint release";
+			case AUTOCOMMIT_CHANGE -> "Auto commit change";
+			case ISOLATION_CHANGE -> "Isolation change";
+			case COMMIT -> "Commit";
+			case ROLLBACK -> "Rollback";
 		};
 	}
 
