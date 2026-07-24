@@ -36,8 +36,13 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
+import java.awt.event.ActionEvent;
+import java.awt.event.InputEvent;
+import java.awt.event.KeyEvent;
+import javax.swing.AbstractAction;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
+import javax.swing.JComponent;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
@@ -50,6 +55,7 @@ import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.JToggleButton;
+import javax.swing.KeyStroke;
 import javax.swing.ListSelectionModel;
 import javax.swing.RowFilter;
 import javax.swing.SpinnerNumberModel;
@@ -115,6 +121,12 @@ public final class ObserverApp extends JFrame {
 
 	private boolean darkMode;
 
+	private final float baseFontSize;
+
+	private float uiFontSize;
+
+	private JLabel title;
+
 	private UUID currentSession;
 
 	private TransactionTimelineDialog transactionDialog;
@@ -125,6 +137,9 @@ public final class ObserverApp extends JFrame {
 		this.port = port;
 		this.listen = listen;
 		this.darkMode = darkMode;
+		var defaultFont = UIManager.getFont("defaultFont");
+		this.baseFontSize = defaultFont != null ? defaultFont.getSize2D() : 13f;
+		this.uiFontSize = this.baseFontSize;
 		build();
 		connect();
 	}
@@ -137,13 +152,13 @@ public final class ObserverApp extends JFrame {
 		var root = new JPanel(new BorderLayout(0, 12));
 		root.setBorder(new EmptyBorder(16, 18, 14, 18));
 		setContentPane(root);
-		var title = new JLabel("JDBC Observer");
-		title.setFont(title.getFont().deriveFont(Font.BOLD, 24f));
+		this.title = new JLabel("JDBC Observer");
+		this.title.setFont(this.title.getFont().deriveFont(Font.BOLD, this.uiFontSize + 11f));
 		var subtitle = new JLabel("Live SQL telemetry");
 		subtitle.setForeground(UIManager.getColor("Label.disabledForeground"));
 		var heading = new JPanel(new BorderLayout());
 		var names = new JPanel(new GridLayout(2, 1));
-		names.add(title);
+		names.add(this.title);
 		names.add(subtitle);
 		heading.add(names);
 		heading.add(this.metrics, BorderLayout.EAST);
@@ -190,6 +205,14 @@ public final class ObserverApp extends JFrame {
 		buttons.add(this.autoScroll);
 		buttons.add(pause);
 		buttons.add(clear);
+		var zoomOut = new JButton("A-");
+		zoomOut.setToolTipText("Zoom out (Ctrl+-)");
+		zoomOut.addActionListener(event -> zoom(-1));
+		var zoomIn = new JButton("A+");
+		zoomIn.setToolTipText("Zoom in (Ctrl+=)");
+		zoomIn.addActionListener(event -> zoom(1));
+		buttons.add(zoomOut);
+		buttons.add(zoomIn);
 		buttons.add(theme);
 		buttons.add(nPlusOneSettings);
 		buttons.add(transactions);
@@ -207,7 +230,7 @@ public final class ObserverApp extends JFrame {
 		this.table.setDefaultRenderer(Double.class, new DurationRenderer());
 		this.table.setDefaultRenderer(Instant.class, new TimeRenderer());
 		this.detail.setEditable(false);
-		this.detail.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
+		this.detail.setFont(new Font(Font.MONOSPACED, Font.PLAIN, Math.round(this.uiFontSize)));
 		this.detail.setLineWrap(true);
 		this.detail.setWrapStyleWord(true);
 		this.detail.setBorder(new EmptyBorder(12, 12, 12, 12));
@@ -220,6 +243,30 @@ public final class ObserverApp extends JFrame {
 		root.add(center);
 		this.status.setBorder(new EmptyBorder(3, 0, 0, 0));
 		root.add(this.status, BorderLayout.SOUTH);
+		var inputMap = getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
+		var actionMap = getRootPane().getActionMap();
+		inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_EQUALS, InputEvent.CTRL_DOWN_MASK), "zoom-in");
+		inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_PLUS, InputEvent.CTRL_DOWN_MASK), "zoom-in");
+		inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_MINUS, InputEvent.CTRL_DOWN_MASK), "zoom-out");
+		inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_0, InputEvent.CTRL_DOWN_MASK), "zoom-reset");
+		actionMap.put("zoom-in", new AbstractAction() {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				zoom(1);
+			}
+		});
+		actionMap.put("zoom-out", new AbstractAction() {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				zoom(-1);
+			}
+		});
+		actionMap.put("zoom-reset", new AbstractAction() {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				zoom(0);
+			}
+		});
 		new Timer(50, event -> drainIncoming()).start();
 	}
 
@@ -567,15 +614,39 @@ public final class ObserverApp extends JFrame {
 		}
 	}
 
+	private void zoom(int steps) {
+		if (steps == 0) {
+			this.uiFontSize = this.baseFontSize;
+		}
+		else {
+			this.uiFontSize = Math.max(10f, Math.min(30f, this.uiFontSize + steps * 2f));
+		}
+		applyZoom();
+	}
+
+	private void applyZoom() {
+		var font = UIManager.getFont("defaultFont");
+		if (font != null) {
+			UIManager.put("defaultFont", font.deriveFont(this.uiFontSize));
+		}
+		for (var window : Window.getWindows()) {
+			if (window.isDisplayable()) {
+				SwingUtilities.updateComponentTreeUI(window);
+			}
+		}
+		this.title.setFont(UIManager.getFont("defaultFont").deriveFont(Font.BOLD, this.uiFontSize + 11f));
+		this.detail.setFont(new Font(Font.MONOSPACED, Font.PLAIN, Math.round(this.uiFontSize)));
+		this.table.setRowHeight(Math.round(this.uiFontSize * 28f / this.baseFontSize));
+	}
+
 	private void toggleTheme(JButton button) {
 		this.darkMode = !this.darkMode;
 		try {
 			UIManager.setLookAndFeel(this.darkMode ? new FlatDarkLaf() : new FlatLightLaf());
-			for (Window window : Window.getWindows()) {
-				if (window.isDisplayable()) {
-					SwingUtilities.updateComponentTreeUI(window);
-				}
-			}
+			UIManager.put("Component.arc", 12);
+			UIManager.put("Button.arc", 12);
+			UIManager.put("TextComponent.arc", 12);
+			applyZoom();
 			button.setText(this.darkMode ? "Light mode" : "Dark mode");
 			this.table.repaint();
 		}
