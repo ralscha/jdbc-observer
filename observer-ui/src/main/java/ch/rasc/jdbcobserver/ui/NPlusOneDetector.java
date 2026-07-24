@@ -1,9 +1,10 @@
 package ch.rasc.jdbcobserver.ui;
 
-import ch.rasc.jdbcobserver.core.SqlEvent;
 import java.util.ArrayDeque;
 import java.util.HashMap;
 import java.util.Map;
+
+import ch.rasc.jdbcobserver.core.SqlEvent;
 
 final class NPlusOneDetector {
 
@@ -79,8 +80,11 @@ final class NPlusOneDetector {
 	}
 
 	private static boolean isStatement(SqlEvent event) {
+		if (event.kind() == SqlEvent.Kind.QUERY) {
+			return event.sql().trim().toLowerCase().startsWith("select");
+		}
 		return switch (event.kind()) {
-			case QUERY, UPDATE, EXECUTE, BATCH -> true;
+			case UPDATE, BATCH -> true;
 			default -> false;
 		};
 	}
