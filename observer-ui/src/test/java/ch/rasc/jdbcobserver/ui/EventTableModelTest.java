@@ -1,12 +1,13 @@
 package ch.rasc.jdbcobserver.ui;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
-import ch.rasc.jdbcobserver.core.SqlEvent;
 import java.time.Instant;
 import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.Test;
+
+import ch.rasc.jdbcobserver.core.SqlEvent;
 
 class EventTableModelTest {
 

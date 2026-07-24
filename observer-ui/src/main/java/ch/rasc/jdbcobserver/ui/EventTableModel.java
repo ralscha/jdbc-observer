@@ -1,11 +1,13 @@
 package ch.rasc.jdbcobserver.ui;
 
-import ch.rasc.jdbcobserver.core.SqlEvent;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+
 import javax.swing.table.AbstractTableModel;
+
+import ch.rasc.jdbcobserver.core.SqlEvent;
 
 final class EventTableModel extends AbstractTableModel {
 
