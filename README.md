@@ -36,7 +36,7 @@ java -javaagent:observer-agent/target/observer-agent.jar=mode=client,host=127.0.
 - transaction timelines with statements, savepoints, commits, rollbacks, isolation changes, and autocommit transitions
 - all current JDBC interfaces from the Java 25 platform (JDBC 4.3)
 
-The UI provides filtering/highlighting, minimum-duration filtering, a SQL-statements-only view, correctly typed sorting, pause/resume, per-event details, grouped cumulative SQL analysis, connection metadata, aggregate metrics, bounded batch ingestion, bounded history, light/dark styling, and complete asynchronous CSV export. Set the history limit with `-DmaxLoggedStatements=50000` (the default is 20,000). Pausing intentionally discards incoming events until capture is resumed.
+The UI provides filtering/highlighting, minimum-duration filtering, a SQL-statements-only view, correctly typed sorting, pause/resume, per-event details, on-demand execution plans, grouped cumulative SQL analysis, connection metadata, aggregate metrics, bounded batch ingestion, bounded history, light/dark styling, complete asynchronous CSV export, and runtime SQL throttling. Pause and Clear stay available in the command bar; on narrower windows, the minimum-duration control collapses into the **Filters** popup. SQL-only filtering, highlighting, and auto-scroll are available from the **View** menu. Set the history limit with `-DmaxLoggedStatements=50000` (the default is 20,000). Pausing intentionally discards incoming events until capture is resumed.
 
 Agent server mode binds only to loopback and accepts one active UI at a time; a newer UI connection replaces the previous one. UI listener mode intentionally opens the configured local port and should be exposed only on trusted networks. The protocol is unencrypted and unauthenticated. SQL and bound values can contain sensitive application data, so do not send telemetry over an untrusted network. Connection property and URL keys commonly used for passwords, secrets, credentials, and tokens are redacted.
 
@@ -51,7 +51,7 @@ The agent records the first non-JDK application stack frame for SQL operations. 
 -javaagent:observer-agent.jar=stackTrace=off
 ```
 
-The UI marks an `N+1` pattern when the same normalized SQL fingerprint is executed at least five times within one second by the same call site, thread, and connection. Use **N+1 settings** in the toolbar to change both values at runtime; retained events are re-evaluated immediately. System properties can still set the startup defaults:
+The UI marks an `N+1` pattern when the same normalized SQL fingerprint is executed at least five times within one second by the same call site, thread, and connection. Use **Settings > N+1 detection** to change both values at runtime; retained events are re-evaluated immediately. System properties can still set the startup defaults:
 
 ```shell
 java -DjdbcObserver.nPlusOneThreshold=10 -DjdbcObserver.nPlusOneWindowMillis=2000 -jar observer-ui.jar
@@ -59,15 +59,23 @@ java -DjdbcObserver.nPlusOneThreshold=10 -DjdbcObserver.nPlusOneWindowMillis=200
 
 ### Theme
 
-Use the **Light mode** / **Dark mode** toolbar button to switch themes at runtime. Dark mode is the default; start directly in light mode with:
+Use **View > Dark mode** to switch themes at runtime. Light mode is the default; start directly in dark mode with:
 
 ```shell
-java -DjdbcObserver.lightMode=true -jar observer-ui.jar
+java -DjdbcObserver.darkMode=true -jar observer-ui.jar
 ```
+
+### SQL throttling
+
+Use **Settings > Throttler** to add an artificial delay before each observed query, update, execute call, or batch. The delay is included in the reported execution duration. The dialog and **Settings > Clear throttler** can both clear the delay. While configured, the footer shows the delay and whether it is active on a connected agent or waiting to be applied. The agent automatically clears throttling when the UI control connection closes.
+
+### Execution plans
+
+Select a query, update, or generic execute event and choose **Analyze > Explain selected SQL** (or press `Ctrl+E`) to request its execution plan. The agent uses the matching live JDBC connection when it is still open, or borrows a replacement from the originating data source after a pooled connection has been returned. It runs plain `EXPLAIN`, never `EXPLAIN ANALYZE`, so the selected statement is not executed. For safety, EXPLAIN requests accept one statement, time out after 10 seconds when the driver supports query timeouts, and cap returned output.
 
 ### Transaction timelines
 
-Open **Transactions** from the toolbar to inspect retained explicit transactions as ordered timelines. Active transactions update once per second. The view highlights transactions whose total duration or current idle time exceeds the configured threshold; both thresholds can be changed directly in the timeline window.
+Open **Analyze > Transactions** to inspect retained explicit transactions as ordered timelines. Active transactions update once per second. The view highlights transactions whose total duration or current idle time exceeds the configured threshold; both thresholds can be changed directly in the timeline window.
 
 Startup defaults are configurable with:
 

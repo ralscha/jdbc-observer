@@ -1,7 +1,9 @@
 package ch.rasc.jdbcobserver.agent;
 
+import ch.rasc.jdbcobserver.core.ControlCodec;
 import ch.rasc.jdbcobserver.core.EventCodec;
 import ch.rasc.jdbcobserver.core.SqlEvent;
+import ch.rasc.jdbcobserver.core.TransportCodec;
 import java.io.*;
 import java.net.*;
 import java.sql.*;
@@ -12,9 +14,14 @@ public final class SmokeApplication {
 
 	public static void main(String[] args) throws Exception {
 		try (var socket = new Socket(InetAddress.getLoopbackAddress(), 4561);
-				var input = new DataInputStream(socket.getInputStream())) {
+				var input = new DataInputStream(socket.getInputStream());
+				var output = new DataOutputStream(socket.getOutputStream())) {
 			socket.setSoTimeout(5_000);
 			EventCodec.readHeader(input);
+			ControlCodec.writeHeader(output);
+			ControlCodec.writeThrottleMillis(output, 50);
+			output.flush();
+			Thread.sleep(100);
 			try (var connection = DriverManager.getConnection("jdbc:h2:mem:observer");
 					var statement = connection.prepareStatement("select ? as answer")) {
 				if (statement.getConnection() != connection || connection.getMetaData().getConnection() != connection)
@@ -49,7 +56,7 @@ public final class SmokeApplication {
 			boolean connectionClosed = false;
 			int connectionEvents = 0;
 			while (!connectionClosed) {
-				var event = EventCodec.read(input);
+				var event = readEvent(input);
 				if (event.transactionId() != 0)
 					transactionEvents.add(event);
 				switch (event.kind()) {
@@ -77,6 +84,8 @@ public final class SmokeApplication {
 			if (!queryEvent.sql().contains("42") || !queryEvent.success()
 					|| !"setInt".equals(queryEvent.parameterMethods().get(1)))
 				throw new AssertionError("unexpected query event: " + queryEvent);
+			if (queryEvent.durationMillis() < 50)
+				throw new AssertionError("throttle was not included in query duration: " + queryEvent.durationMillis());
 			if (!queryEvent.fingerprint().equals("select ? as answer")
 					|| !queryEvent.callSite().contains("SmokeApplication.main") || queryEvent.stackTrace().isBlank())
 				throw new AssertionError("attribution missing: " + queryEvent);
@@ -95,6 +104,33 @@ public final class SmokeApplication {
 			if (transactionEvents.stream().mapToLong(SqlEvent::transactionId).distinct().count() != 1)
 				throw new AssertionError("transaction events do not share one identity: " + transactionEvents);
 
+			try (var connection = DriverManager.getConnection("jdbc:h2:mem:observer-explain")) {
+				try (var statement = connection.createStatement(); var result = statement.executeQuery("select 42")) {
+					result.next();
+				}
+				SqlEvent explainQuery;
+				do {
+					explainQuery = readEvent(input);
+				}
+				while (explainQuery.kind() != SqlEvent.Kind.QUERY);
+				ControlCodec.writeExplainRequest(output, 1, explainQuery.connection(), explainQuery.sql());
+				output.flush();
+				TransportCodec.ExplainResponse response = null;
+				while (response == null) {
+					var message = TransportCodec.read(input);
+					if (message instanceof TransportCodec.ExplainResponse value) {
+						response = value;
+					}
+				}
+				if (!response.success() || !response.plan().toUpperCase(java.util.Locale.ROOT).contains("SELECT"))
+					throw new AssertionError("EXPLAIN failed: " + response);
+			}
+			SqlEvent explainClose;
+			do {
+				explainClose = readEvent(input);
+			}
+			while (explainClose.kind() != SqlEvent.Kind.CONNECTION_CLOSE);
+
 			var dataSource = new JdbcDataSource();
 			dataSource.setURL("jdbc:h2:mem:observer-pool");
 			try (var connection = dataSource.getConnection();
@@ -108,7 +144,7 @@ public final class SmokeApplication {
 			int pooledQueries = 0;
 			boolean pooledConnectionClosed = false;
 			while (!pooledConnectionClosed) {
-				var event = EventCodec.read(input);
+				var event = readEvent(input);
 				if (event.kind() == SqlEvent.Kind.CONNECTION)
 					pooledConnections++;
 				if (event.kind() == SqlEvent.Kind.QUERY && event.rawSql().contains("pooled_answer"))
@@ -119,7 +155,19 @@ public final class SmokeApplication {
 			if (pooledConnections != 1 || pooledQueries != 1)
 				throw new AssertionError("nested DataSource/Driver observation: connections=" + pooledConnections
 						+ ", queries=" + pooledQueries);
-			System.out.println("SMOKE_OK SQL telemetry, attribution, and complete transaction timeline");
+			ControlCodec.writeThrottleMillis(output, 0);
+			output.flush();
+			System.out
+				.println("SMOKE_OK SQL telemetry, throttling, EXPLAIN, attribution, and complete transaction timeline");
+		}
+	}
+
+	private static SqlEvent readEvent(DataInputStream input) throws Exception {
+		while (true) {
+			var message = TransportCodec.read(input);
+			if (message instanceof TransportCodec.EventMessage event) {
+				return event.event();
+			}
 		}
 	}
 

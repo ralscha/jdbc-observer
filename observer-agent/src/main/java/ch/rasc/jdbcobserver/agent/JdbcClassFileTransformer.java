@@ -11,6 +11,7 @@ import java.lang.constant.ClassDesc;
 import java.lang.constant.MethodTypeDesc;
 import java.lang.instrument.ClassFileTransformer;
 import java.lang.instrument.Instrumentation;
+import java.lang.reflect.AccessFlag;
 import java.security.ProtectionDomain;
 import java.sql.ConnectionBuilder;
 import java.sql.Driver;
@@ -39,12 +40,16 @@ final class JdbcClassFileTransformer implements ClassFileTransformer {
 
 	private static final ClassDesc PROPERTIES = ClassDesc.of("java.util.Properties");
 
+	private static final ClassDesc OBJECT = ClassDesc.of("java.lang.Object");
+
+	private static final ClassDesc BOOLEAN = ClassDesc.ofDescriptor("Z");
+
 	private static final ClassDesc INTERCEPTOR = ClassDesc.of("ch.rasc.jdbcobserver.agent.ConnectionInterceptor");
 
 	private static final ClassDesc INVOCATION = ClassDesc
 		.of("ch.rasc.jdbcobserver.agent.ConnectionInterceptor$Invocation");
 
-	private static final MethodTypeDesc ENTER = MethodTypeDesc.of(INVOCATION);
+	private static final MethodTypeDesc ENTER = MethodTypeDesc.of(INVOCATION, OBJECT, BOOLEAN);
 
 	private static final MethodTypeDesc EXIT = MethodTypeDesc.of(CONNECTION, CONNECTION, INVOCATION);
 
@@ -159,14 +164,19 @@ final class JdbcClassFileTransformer implements ClassFileTransformer {
 
 	private static MethodTransform instrument(MethodModel method) {
 		boolean driverConnect = method.methodName().equalsString("connect");
+		boolean reusableSource = method.methodName().equalsString("getConnection")
+				&& method.methodType().equalsString("()" + CONNECTION_DESCRIPTOR);
 		return MethodTransform.transformingCode(CodeTransform.ofStateful(() -> {
-			var state = new InstrumentationState(driverConnect);
+			var state = new InstrumentationState(driverConnect, reusableSource);
 			CodeTransform body = state::accept;
 			return body.andThen(CodeTransform.endHandler(state::finish));
 		}));
 	}
 
 	private static boolean isConnectionFactoryMethod(MethodModel method) {
+		if (method.flags().has(AccessFlag.STATIC)) {
+			return false;
+		}
 		String name = method.methodName().stringValue();
 		String descriptor = method.methodType().stringValue();
 		return (name.equals("connect") && descriptor.equals(CONNECT_DESCRIPTOR))
@@ -183,17 +193,27 @@ final class JdbcClassFileTransformer implements ClassFileTransformer {
 
 		private final boolean driverConnect;
 
+		private final boolean reusableSource;
+
 		private int invocationSlot = -1;
 
 		private java.lang.classfile.Label tryStart;
 
-		private InstrumentationState(boolean driverConnect) {
+		private InstrumentationState(boolean driverConnect, boolean reusableSource) {
 			this.driverConnect = driverConnect;
+			this.reusableSource = reusableSource;
 		}
 
 		private void accept(java.lang.classfile.CodeBuilder builder, java.lang.classfile.CodeElement element) {
 			if (this.invocationSlot < 0) {
 				this.invocationSlot = builder.allocateLocal(TypeKind.REFERENCE);
+				builder.loadLocal(TypeKind.REFERENCE, 0);
+				if (this.reusableSource) {
+					builder.iconst_1();
+				}
+				else {
+					builder.iconst_0();
+				}
 				builder.invokestatic(INTERCEPTOR, "enter", ENTER).storeLocal(TypeKind.REFERENCE, this.invocationSlot);
 				this.tryStart = builder.newBoundLabel();
 			}

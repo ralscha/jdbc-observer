@@ -86,6 +86,11 @@ public final class JdbcProxy implements InvocationHandler {
 	}
 
 	public static Connection wrapConnection(Connection value, long creationNanos, String url, String properties) {
+		return wrapConnection(value, creationNanos, url, properties, null);
+	}
+
+	static Connection wrapConnection(Connection value, long creationNanos, String url, String properties,
+			Object source) {
 		if (value == null || isObserved(value)) {
 			return value;
 		}
@@ -96,6 +101,9 @@ public final class JdbcProxy implements InvocationHandler {
 			var observed = proxy(value, Connection.class, handler);
 			handler.observedProxy = observed;
 			state.observedConnection = observed;
+			if (AgentRuntime.enabled()) {
+				ExplainService.register(state.id(), value, source);
+			}
 			publish(AgentRuntime.nextId(), 0, state, SqlEvent.Kind.CONNECTION, "", "", Map.of(), Map.of(),
 					creationNanos, 0, 0, -1, true, "", 0);
 			return observed;
@@ -115,6 +123,7 @@ public final class JdbcProxy implements InvocationHandler {
 		var name = method.getName();
 		if (method.getDeclaringClass() == ObservedConnection.class && name.equals("jdbcObserverDeactivate")) {
 			this.connection.deactivate();
+			ExplainService.unregister(this.connection.id());
 			return null;
 		}
 		if (name.equals("equals")) {
@@ -238,6 +247,7 @@ public final class JdbcProxy implements InvocationHandler {
 			try {
 				var result = call(method, arguments);
 				this.connection.closed(true);
+				ExplainService.unregister(this.connection.id());
 				publishLifecycle(SqlEvent.Kind.CONNECTION_CLOSE, name, true, "", System.nanoTime() - started);
 				this.connection.finishTransaction();
 				return result;
@@ -373,6 +383,9 @@ public final class JdbcProxy implements InvocationHandler {
 		}
 		long id = AgentRuntime.nextId();
 		long started = System.nanoTime();
+		if (isExecution(kind)) {
+			AgentRuntime.throttleSqlExecution();
+		}
 		long rows = -1;
 		this.lastExecutionId = id;
 		boolean success = false;

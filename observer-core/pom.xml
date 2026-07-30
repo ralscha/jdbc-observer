@@ -7,7 +7,7 @@
   <parent>
     <groupId>ch.rasc</groupId>
     <artifactId>jdbc-observer-parent</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.2</version>
   </parent>
 
   <artifactId>observer-core</artifactId>

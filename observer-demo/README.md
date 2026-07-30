@@ -27,3 +27,5 @@ curl http://localhost:8080/demo/fixed
 ```
 
 The first endpoint performs one author query followed by one lazy book query per author. The second loads the same graph with one SQL statement. The observer UI attributes both to their Spring service call sites and marks the repeated lazy query as an N+1 pattern.
+
+To inspect an execution plan, select one of the captured query rows and choose **Analyze > Explain selected SQL** or press `Ctrl+E`. The request remains available after Spring returns the logical connection to Hikari; the agent borrows an unobserved replacement connection from the same data source to run plain `EXPLAIN`.

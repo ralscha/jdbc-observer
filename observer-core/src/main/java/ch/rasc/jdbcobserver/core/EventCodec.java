@@ -116,7 +116,7 @@ public final class EventCodec {
 		return result;
 	}
 
-	private static void writeString(DataOutput out, String value) throws IOException {
+	static void writeString(DataOutput out, String value) throws IOException {
 		if (value.length() > MAX_STRING_BYTES) {
 			throw new IOException("JDBC Observer text field exceeds " + MAX_STRING_BYTES + " bytes");
 		}
@@ -128,7 +128,7 @@ public final class EventCodec {
 		out.write(encoded);
 	}
 
-	private static String readString(DataInput in) throws IOException {
+	static String readString(DataInput in) throws IOException {
 		int length = in.readInt();
 		if (length < 0 || length > MAX_STRING_BYTES) {
 			throw corrupted("Invalid JDBC Observer text length: " + length, null);

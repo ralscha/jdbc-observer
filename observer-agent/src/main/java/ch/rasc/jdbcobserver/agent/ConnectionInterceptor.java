@@ -9,13 +9,15 @@ public final class ConnectionInterceptor {
 
 	private static final ThreadLocal<Integer> DEPTH = ThreadLocal.withInitial(() -> 0);
 
+	private static final ThreadLocal<Integer> SUPPRESSION = ThreadLocal.withInitial(() -> 0);
+
 	private ConnectionInterceptor() {
 	}
 
-	public static Invocation enter() {
+	public static Invocation enter(Object source, boolean reusableSource) {
 		int depth = DEPTH.get();
 		DEPTH.set(depth + 1);
-		return new Invocation(System.nanoTime(), depth == 0);
+		return new Invocation(System.nanoTime(), depth == 0 && SUPPRESSION.get() == 0, source, reusableSource);
 	}
 
 	public static Connection exit(Connection connection, Invocation invocation) {
@@ -32,7 +34,8 @@ public final class ConnectionInterceptor {
 		}
 		try {
 			return JdbcProxy.wrapConnection(connection, Math.max(0, System.nanoTime() - invocation.started()),
-					redactUrl(url), sanitizeProperties(properties));
+					redactUrl(url), sanitizeProperties(properties),
+					invocation.reusableSource() ? invocation.source() : null);
 		}
 		catch (Exception | LinkageError ex) {
 			System.err.println("[jdbc-observer] connection observation failed; returning the original connection: "
@@ -43,6 +46,22 @@ public final class ConnectionInterceptor {
 
 	public static void exitException(Invocation invocation) {
 		leave(invocation);
+	}
+
+	static <T> T withoutObservation(CheckedSupplier<T> supplier) throws Exception {
+		int suppression = SUPPRESSION.get();
+		SUPPRESSION.set(suppression + 1);
+		try {
+			return supplier.get();
+		}
+		finally {
+			if (suppression == 0) {
+				SUPPRESSION.remove();
+			}
+			else {
+				SUPPRESSION.set(suppression);
+			}
+		}
 	}
 
 	private static void leave(Invocation invocation) {
@@ -90,11 +109,17 @@ public final class ConnectionInterceptor {
 
 		private final boolean outermost;
 
+		private final Object source;
+
+		private final boolean reusableSource;
+
 		private boolean active = true;
 
-		private Invocation(long started, boolean outermost) {
+		private Invocation(long started, boolean outermost, Object source, boolean reusableSource) {
 			this.started = started;
 			this.outermost = outermost;
+			this.source = source;
+			this.reusableSource = reusableSource;
 		}
 
 		private long started() {
@@ -105,6 +130,14 @@ public final class ConnectionInterceptor {
 			return this.outermost;
 		}
 
+		private Object source() {
+			return this.source;
+		}
+
+		private boolean reusableSource() {
+			return this.reusableSource;
+		}
+
 		private boolean leave() {
 			if (!this.active) {
 				return false;
@@ -112,6 +145,13 @@ public final class ConnectionInterceptor {
 			this.active = false;
 			return true;
 		}
+
+	}
+
+	@FunctionalInterface
+	interface CheckedSupplier<T> {
+
+		T get() throws Exception;
 
 	}
 

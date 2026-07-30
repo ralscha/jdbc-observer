@@ -58,6 +58,21 @@ class EventCodecTest {
 	}
 
 	@Test
+	void rejectsUnsupportedProtocolVersions() throws IOException {
+		var bytes = new ByteArrayOutputStream();
+		try (var output = new DataOutputStream(bytes)) {
+			output.writeInt(EventCodec.MAGIC);
+			output.writeInt(2);
+			output.writeLong(0);
+			output.writeLong(0);
+		}
+
+		try (var input = new DataInputStream(new ByteArrayInputStream(bytes.toByteArray()))) {
+			assertThrows(IOException.class, () -> EventCodec.readHeader(input));
+		}
+	}
+
+	@Test
 	void eventKindWireCodesAreStableAndUnique() {
 		assertEquals(java.util.stream.IntStream.rangeClosed(1, 15).boxed().toList(),
 				java.util.Arrays.stream(SqlEvent.Kind.values()).map(SqlEvent.Kind::wireCode).sorted().toList());
