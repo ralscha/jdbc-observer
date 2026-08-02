@@ -9,6 +9,7 @@ import java.util.Map;
 
 import javax.swing.table.AbstractTableModel;
 
+import ch.rasc.jdbcobserver.core.BroadDmlDetector;
 import ch.rasc.jdbcobserver.core.CartesianProductDetector;
 import ch.rasc.jdbcobserver.core.CartesianProductDetector.Finding;
 import ch.rasc.jdbcobserver.core.SqlEvent;
@@ -25,6 +26,8 @@ final class EventTableModel extends AbstractTableModel {
 	private final RepetitionDetector repetitionDetector = new RepetitionDetector();
 
 	private final Map<Long, Finding> cartesianProducts = new HashMap<>();
+
+	private final Map<Long, BroadDmlDetector.Finding> broadDml = new HashMap<>();
 
 	private double totalDurationMillis;
 
@@ -57,9 +60,15 @@ final class EventTableModel extends AbstractTableModel {
 			}
 			this.events.add(event);
 			this.repetitionDetector.add(event);
-			var cartesianProduct = CartesianProductDetector.detect(sql(event));
-			if (cartesianProduct != Finding.NONE) {
-				this.cartesianProducts.put(event.id(), cartesianProduct);
+			if (event.kind().isSqlStatement()) {
+				var cartesianProduct = CartesianProductDetector.detect(sql(event));
+				if (cartesianProduct != Finding.NONE) {
+					this.cartesianProducts.put(event.id(), cartesianProduct);
+				}
+				var broadDmlFinding = BroadDmlDetector.detect(sql(event));
+				if (broadDmlFinding != BroadDmlDetector.Finding.NONE) {
+					this.broadDml.put(event.id(), broadDmlFinding);
+				}
 			}
 			addMetrics(event);
 		}
@@ -67,6 +76,7 @@ final class EventTableModel extends AbstractTableModel {
 			var removed = this.events.removeFirst();
 			this.repetitionDetector.remove(removed);
 			this.cartesianProducts.remove(removed.id());
+			this.broadDml.remove(removed.id());
 			removeMetrics(removed);
 		}
 		fireTableDataChanged();
@@ -76,6 +86,7 @@ final class EventTableModel extends AbstractTableModel {
 		this.events.clear();
 		this.repetitionDetector.clear();
 		this.cartesianProducts.clear();
+		this.broadDml.clear();
 		this.totalDurationMillis = 0;
 		this.failedCount = 0;
 		this.rowCount = 0;
@@ -170,22 +181,28 @@ final class EventTableModel extends AbstractTableModel {
 	}
 
 	private String pattern(SqlEvent event) {
+		var labels = new ArrayList<String>(3);
 		var repetition = this.repetitionDetector.detection(event.id());
-		String repetitionLabel = switch (repetition.pattern()) {
-			case NONE -> "";
-			case REDUNDANT -> "Redundant \u00d7" + repetition.repetitions();
-			case N_PLUS_ONE -> "N+1 \u00d7" + repetition.repetitions();
-			case BATCH_CANDIDATE -> "Batch candidate \u00d7" + repetition.repetitions();
-		};
-		String cartesianProduct = switch (this.cartesianProducts.getOrDefault(event.id(), Finding.NONE)) {
-			case NONE -> "";
-			case EXPLICIT_CROSS_JOIN -> "Cartesian (CROSS JOIN)";
-			case UNCONSTRAINED_COMMA_JOIN -> "Cartesian (comma join)";
-		};
-		if (repetitionLabel.isBlank()) {
-			return cartesianProduct;
+		switch (repetition.pattern()) {
+			case NONE -> {
+			}
+			case REDUNDANT -> labels.add("Redundant \u00d7" + repetition.repetitions());
+			case N_PLUS_ONE -> labels.add("N+1 \u00d7" + repetition.repetitions());
+			case BATCH_CANDIDATE -> labels.add("Batch candidate \u00d7" + repetition.repetitions());
 		}
-		return cartesianProduct.isBlank() ? repetitionLabel : repetitionLabel + "; " + cartesianProduct;
+		switch (this.cartesianProducts.getOrDefault(event.id(), Finding.NONE)) {
+			case NONE -> {
+			}
+			case EXPLICIT_CROSS_JOIN -> labels.add("Cartesian (CROSS JOIN)");
+			case UNCONSTRAINED_COMMA_JOIN -> labels.add("Cartesian (comma join)");
+		}
+		switch (this.broadDml.getOrDefault(event.id(), BroadDmlDetector.Finding.NONE)) {
+			case NONE -> {
+			}
+			case UPDATE_WITHOUT_WHERE -> labels.add("UPDATE without WHERE");
+			case DELETE_WITHOUT_WHERE -> labels.add("DELETE without WHERE");
+		}
+		return String.join("; ", labels);
 	}
 
 	private static String sql(SqlEvent event) {

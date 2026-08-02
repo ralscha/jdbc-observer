@@ -77,13 +77,34 @@ class EventTableModelTest {
 		model.configureRepetitionDetection(2, 10_000);
 		model.add(event(1, SqlEvent.Kind.QUERY, "select * from child where id = 1", "select child", true));
 		model.add(event(2, SqlEvent.Kind.QUERY, "select * from child where id = 1", "select child", true));
-		model.add(event(3, SqlEvent.Kind.UPDATE, "update child set name = 'a'", "update child set name = ?", true));
-		model.add(event(4, SqlEvent.Kind.UPDATE, "update child set name = 'b'", "update child set name = ?", true));
+		model.add(event(3, SqlEvent.Kind.UPDATE, "update child set name = 'a' where id = 1",
+				"update child set name = ? where id = ?", true));
+		model.add(event(4, SqlEvent.Kind.UPDATE, "update child set name = 'b' where id = 2",
+				"update child set name = ? where id = ?", true));
 
 		assertEquals("Redundant \u00d72", model.getValueAt(0, 2));
 		assertEquals("Redundant \u00d72", model.getValueAt(1, 2));
 		assertEquals("Batch candidate \u00d72", model.getValueAt(2, 2));
 		assertEquals("Batch candidate \u00d72", model.getValueAt(3, 2));
+	}
+
+	@Test
+	void reportsBroadDmlInThePatternColumn() {
+		var model = new EventTableModel(10);
+		model.add(event(1, SqlEvent.Kind.UPDATE, "update customer set active = false", "update customer set active = ?",
+				true));
+		model.add(event(2, SqlEvent.Kind.UPDATE, "delete from audit_log", "delete from audit_log", true));
+
+		assertEquals("UPDATE without WHERE", model.getValueAt(0, 2));
+		assertEquals("DELETE without WHERE", model.getValueAt(1, 2));
+	}
+
+	@Test
+	void doesNotAnalyzeLifecycleDetailsAsSql() {
+		var model = new EventTableModel(10);
+		model.add(event(1, SqlEvent.Kind.SAVEPOINT, "update", "", true));
+
+		assertEquals("", model.getValueAt(0, 2));
 	}
 
 	private static SqlEvent event(long id, String fingerprint, boolean success) {

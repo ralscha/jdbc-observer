@@ -34,6 +34,7 @@ java -javaagent:observer-agent/target/observer-agent.jar=mode=client,host=127.0.
 - normalized SQL fingerprints, application call-site attribution, and thresholded stack traces
 - classification of redundant SQL, N+1 reads, and writes that should use JDBC batching
 - conservative Cartesian-product detection for explicit `CROSS JOIN` and unconstrained comma joins
+- warnings for `UPDATE` and `DELETE` statements without a same-level `WHERE` clause
 - transaction timelines with statements, savepoints, commits, rollbacks, isolation changes, and autocommit transitions
 - all current JDBC interfaces from the Java 25 platform (JDBC 4.3)
 
@@ -79,6 +80,13 @@ by a `WHERE` clause.
 This is intentionally a conservative syntax warning. JDBC row counts do not reveal the expected cardinality, so
 large result sets and complex joins are not guessed to be Cartesian products. Intentional cross joins are still
 marked and should be reviewed rather than assumed to be defects.
+
+### Broad DML detection
+
+The UI marks `UPDATE without WHERE` and `DELETE without WHERE` in the **Pattern** column. A `WHERE` inside a CTE,
+subquery, comment, string value, or quoted identifier does not suppress the warning; the constraint must belong to
+the DML statement itself. Intentional whole-table operations are still marked for review. `TRUNCATE` is not marked
+because it already expresses whole-table intent explicitly.
 
 ### Theme
 
