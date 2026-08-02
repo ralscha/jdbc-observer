@@ -2,7 +2,7 @@
 
 A modern, zero-configuration Java 25 agent and Swing console for live JDBC SQL telemetry. It instruments JDBC drivers and data sources directly with the standard Java Class-File API, so applications keep their real JDBC URL, driver, and pool configuration without an instrumentation framework or proxy driver.
 
-![JDBC Observer showing live SQL telemetry and N+1 query detection](docs/images/jdbc-observer.png)
+![JDBC Observer showing live SQL telemetry and SQL pattern detection](docs/images/jdbc-observer.png)
 
 ## Build and run
 
@@ -32,7 +32,7 @@ java -javaagent:observer-agent/target/observer-agent.jar=mode=client,host=127.0.
 - separate execution, result-set fetch, and total result-set usage timing
 - query timeout, autocommit state, and transaction isolation at execution time
 - normalized SQL fingerprints, application call-site attribution, and thresholded stack traces
-- N+1 detection for repeated fingerprints from the same call site, thread, and connection
+- classification of redundant SQL, N+1 reads, and writes that should use JDBC batching
 - conservative Cartesian-product detection for explicit `CROSS JOIN` and unconstrained comma joins
 - transaction timelines with statements, savepoints, commits, rollbacks, isolation changes, and autocommit transitions
 - all current JDBC interfaces from the Java 25 platform (JDBC 4.3)
@@ -43,7 +43,7 @@ Agent server mode binds only to loopback and accepts one active UI at a time; a 
 
 Each agent process has a unique session identity. The UI retains events across reconnects to the same process and starts a fresh history when a different agent connects, preventing event and transaction ID collisions.
 
-### Call sites and N+1 detection
+### Call sites and repeated SQL detection
 
 The agent records the first non-JDK application stack frame for SQL operations. Failed statements and statements taking at least 100 ms also include up to 32 application frames. Configure this in the agent argument:
 
@@ -52,11 +52,22 @@ The agent records the first non-JDK application stack frame for SQL operations. 
 -javaagent:observer-agent.jar=stackTrace=off
 ```
 
-The UI marks an `N+1` pattern when the same normalized SQL fingerprint is executed at least five times within one second by the same call site, thread, and connection. Use **Settings > N+1 detection** to change both values at runtime; retained events are re-evaluated immediately. System properties can still set the startup defaults:
+The UI classifies a repeated normalized SQL fingerprint after at least five executions within one second by the
+same call site, thread, connection, and, when present, explicit transaction:
+
+- `Redundant` when every execution uses the same bound values or concrete SQL
+- `N+1` when a read repeats with different bound values or literal SQL
+- `Batch candidate` when a non-batched write repeats with different bound values or literal SQL
+
+Actual JDBC batch executions are excluded. Use **Settings > Repeated SQL detection** to change the threshold and
+window at runtime; retained events are re-evaluated immediately. System properties set the startup defaults:
 
 ```shell
-java -DjdbcObserver.nPlusOneThreshold=10 -DjdbcObserver.nPlusOneWindowMillis=2000 -jar observer-ui.jar
+java -DjdbcObserver.repetitionThreshold=10 -DjdbcObserver.repetitionWindowMillis=2000 -jar observer-ui.jar
 ```
+
+The previous `jdbcObserver.nPlusOneThreshold` and `jdbcObserver.nPlusOneWindowMillis` property names remain
+supported as fallbacks.
 
 ### Cartesian-product detection
 

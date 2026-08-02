@@ -22,7 +22,7 @@ final class EventTableModel extends AbstractTableModel {
 
 	private final int limit;
 
-	private final NPlusOneDetector nPlusOneDetector = new NPlusOneDetector();
+	private final RepetitionDetector repetitionDetector = new RepetitionDetector();
 
 	private final Map<Long, Finding> cartesianProducts = new HashMap<>();
 
@@ -56,7 +56,7 @@ final class EventTableModel extends AbstractTableModel {
 				continue;
 			}
 			this.events.add(event);
-			this.nPlusOneDetector.add(event);
+			this.repetitionDetector.add(event);
 			var cartesianProduct = CartesianProductDetector.detect(sql(event));
 			if (cartesianProduct != Finding.NONE) {
 				this.cartesianProducts.put(event.id(), cartesianProduct);
@@ -65,7 +65,7 @@ final class EventTableModel extends AbstractTableModel {
 		}
 		while (this.events.size() > this.limit) {
 			var removed = this.events.removeFirst();
-			this.nPlusOneDetector.remove(removed);
+			this.repetitionDetector.remove(removed);
 			this.cartesianProducts.remove(removed.id());
 			removeMetrics(removed);
 		}
@@ -74,7 +74,7 @@ final class EventTableModel extends AbstractTableModel {
 
 	void clear() {
 		this.events.clear();
-		this.nPlusOneDetector.clear();
+		this.repetitionDetector.clear();
 		this.cartesianProducts.clear();
 		this.totalDurationMillis = 0;
 		this.failedCount = 0;
@@ -102,21 +102,21 @@ final class EventTableModel extends AbstractTableModel {
 		return this.rowCount;
 	}
 
-	int nPlusOneThreshold() {
-		return this.nPlusOneDetector.threshold();
+	int repetitionThreshold() {
+		return this.repetitionDetector.threshold();
 	}
 
-	long nPlusOneWindowMillis() {
-		return this.nPlusOneDetector.windowMillis();
+	long repetitionWindowMillis() {
+		return this.repetitionDetector.windowMillis();
 	}
 
-	void configureNPlusOne(int threshold, long windowMillis) {
-		this.nPlusOneDetector.configure(threshold, windowMillis, this.events);
+	void configureRepetitionDetection(int threshold, long windowMillis) {
+		this.repetitionDetector.configure(threshold, windowMillis, this.events);
 		fireTableDataChanged();
 	}
 
-	int trackedNPlusOneEventCount() {
-		return this.nPlusOneDetector.trackedEventCount();
+	int trackedRepetitionEventCount() {
+		return this.repetitionDetector.trackedEventCount();
 	}
 
 	@Override
@@ -170,17 +170,22 @@ final class EventTableModel extends AbstractTableModel {
 	}
 
 	private String pattern(SqlEvent event) {
-		int repetitions = this.nPlusOneDetector.repetitions(event.id());
-		String nPlusOne = repetitions == 0 ? "" : "N+1 \u00d7" + repetitions;
+		var repetition = this.repetitionDetector.detection(event.id());
+		String repetitionLabel = switch (repetition.pattern()) {
+			case NONE -> "";
+			case REDUNDANT -> "Redundant \u00d7" + repetition.repetitions();
+			case N_PLUS_ONE -> "N+1 \u00d7" + repetition.repetitions();
+			case BATCH_CANDIDATE -> "Batch candidate \u00d7" + repetition.repetitions();
+		};
 		String cartesianProduct = switch (this.cartesianProducts.getOrDefault(event.id(), Finding.NONE)) {
 			case NONE -> "";
 			case EXPLICIT_CROSS_JOIN -> "Cartesian (CROSS JOIN)";
 			case UNCONSTRAINED_COMMA_JOIN -> "Cartesian (comma join)";
 		};
-		if (nPlusOne.isBlank()) {
+		if (repetitionLabel.isBlank()) {
 			return cartesianProduct;
 		}
-		return cartesianProduct.isBlank() ? nPlusOne : nPlusOne + "; " + cartesianProduct;
+		return cartesianProduct.isBlank() ? repetitionLabel : repetitionLabel + "; " + cartesianProduct;
 	}
 
 	private static String sql(SqlEvent event) {

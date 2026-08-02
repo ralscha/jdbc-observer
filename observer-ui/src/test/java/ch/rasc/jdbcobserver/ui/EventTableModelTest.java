@@ -19,7 +19,7 @@ class EventTableModelTest {
 		}
 
 		assertEquals(3, model.getRowCount());
-		assertTrue(model.trackedNPlusOneEventCount() <= 3);
+		assertTrue(model.trackedRepetitionEventCount() <= 3);
 		assertEquals(1, model.failedCount());
 		assertEquals(0, model.observedRowCount());
 		assertEquals(57.0, model.totalDurationMillis(), 0.000_001);
@@ -60,14 +60,44 @@ class EventTableModelTest {
 		assertEquals("Cartesian (CROSS JOIN)", model.getValueAt(0, 2));
 	}
 
+	@Test
+	void reportsTheSpecificRepetitionClassificationInThePatternColumn() {
+		var model = new EventTableModel(10);
+		model.configureRepetitionDetection(2, 10_000);
+		model.add(event(1, "select * from child where id = 1", "select * from child where id = ?", true));
+		model.add(event(2, "select * from child where id = 2", "select * from child where id = ?", true));
+
+		assertEquals("N+1 \u00d72", model.getValueAt(0, 2));
+		assertEquals("N+1 \u00d72", model.getValueAt(1, 2));
+	}
+
+	@Test
+	void reportsRedundantAndBatchCandidateLabels() {
+		var model = new EventTableModel(10);
+		model.configureRepetitionDetection(2, 10_000);
+		model.add(event(1, SqlEvent.Kind.QUERY, "select * from child where id = 1", "select child", true));
+		model.add(event(2, SqlEvent.Kind.QUERY, "select * from child where id = 1", "select child", true));
+		model.add(event(3, SqlEvent.Kind.UPDATE, "update child set name = 'a'", "update child set name = ?", true));
+		model.add(event(4, SqlEvent.Kind.UPDATE, "update child set name = 'b'", "update child set name = ?", true));
+
+		assertEquals("Redundant \u00d72", model.getValueAt(0, 2));
+		assertEquals("Redundant \u00d72", model.getValueAt(1, 2));
+		assertEquals("Batch candidate \u00d72", model.getValueAt(2, 2));
+		assertEquals("Batch candidate \u00d72", model.getValueAt(3, 2));
+	}
+
 	private static SqlEvent event(long id, String fingerprint, boolean success) {
 		return event(id, "select", fingerprint, success);
 	}
 
 	private static SqlEvent event(long id, String sql, String fingerprint, boolean success) {
-		return new SqlEvent(id, 0, 1, Instant.ofEpochSecond(id), "worker", "connection", SqlEvent.Kind.QUERY, sql, sql,
-				Map.of(), Map.of(), id * 1_000_000, 0, 0, -1, success, success ? "" : "failed", 0, true, 2, "jdbc:test",
-				"", fingerprint, "example.Repository.find(Repository.java:42)", "");
+		return event(id, SqlEvent.Kind.QUERY, sql, fingerprint, success);
+	}
+
+	private static SqlEvent event(long id, SqlEvent.Kind kind, String sql, String fingerprint, boolean success) {
+		return new SqlEvent(id, 0, 1, Instant.ofEpochSecond(id), "worker", "connection", kind, sql, sql, Map.of(),
+				Map.of(), id * 1_000_000, 0, 0, -1, success, success ? "" : "failed", 0, true, 2, "jdbc:test", "",
+				fingerprint, "example.Repository.find(Repository.java:42)", "");
 	}
 
 	private static SqlEvent resultSetEvent(long id, long parentId, long rows, boolean success) {

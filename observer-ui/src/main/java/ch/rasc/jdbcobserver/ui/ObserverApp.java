@@ -334,9 +334,9 @@ public final class ObserverApp extends JFrame {
 
 		var settings = new JMenu("Settings");
 		settings.setMnemonic(KeyEvent.VK_S);
-		var nPlusOne = new JMenuItem("N+1 detection...");
-		nPlusOne.addActionListener(event -> showNPlusOneSettings());
-		settings.add(nPlusOne);
+		var repetitions = new JMenuItem("Repeated SQL detection...");
+		repetitions.addActionListener(event -> showRepetitionSettings());
+		settings.add(repetitions);
 		settings.addSeparator();
 		var throttler = new JMenuItem("Throttler...");
 		throttler.addActionListener(event -> showThrottleSettings());
@@ -969,10 +969,10 @@ public final class ObserverApp extends JFrame {
 		this.transactionDialog.toFront();
 	}
 
-	private void showNPlusOneSettings() {
-		var threshold = new JSpinner(new SpinnerNumberModel(this.model.nPlusOneThreshold(), 2, 10_000, 1));
-		var window = new JSpinner(new SpinnerNumberModel(this.model.nPlusOneWindowMillis(), 1L, 3_600_000L, 100L));
-		threshold.setToolTipText("Equivalent executions required before a pattern is marked");
+	private void showRepetitionSettings() {
+		var threshold = new JSpinner(new SpinnerNumberModel(this.model.repetitionThreshold(), 2, 10_000, 1));
+		var window = new JSpinner(new SpinnerNumberModel(this.model.repetitionWindowMillis(), 1L, 3_600_000L, 100L));
+		threshold.setToolTipText("Related executions required before a pattern is classified");
 		window.setToolTipText("Time window containing the repeated executions");
 		var form = new JPanel(new GridBagLayout());
 		var constraints = new GridBagConstraints();
@@ -994,12 +994,12 @@ public final class ObserverApp extends JFrame {
 		constraints.weightx = 1;
 		constraints.fill = GridBagConstraints.HORIZONTAL;
 		form.add(window, constraints);
-		if (JOptionPane.showConfirmDialog(this, form, "N+1 detection settings", JOptionPane.OK_CANCEL_OPTION,
+		if (JOptionPane.showConfirmDialog(this, form, "Repeated SQL detection settings", JOptionPane.OK_CANCEL_OPTION,
 				JOptionPane.PLAIN_MESSAGE) == JOptionPane.OK_OPTION) {
 			var newThreshold = ((Number) threshold.getValue()).intValue();
 			var newWindow = ((Number) window.getValue()).longValue();
-			this.model.configureNPlusOne(newThreshold, newWindow);
-			setStatus("\u25cf N+1 detection: " + newThreshold + " executions within " + newWindow + " ms",
+			this.model.configureRepetitionDetection(newThreshold, newWindow);
+			setStatus("\u25cf Repeated SQL detection: " + newThreshold + " executions within " + newWindow + " ms",
 					new Color(96, 165, 250));
 			this.table.repaint();
 		}
