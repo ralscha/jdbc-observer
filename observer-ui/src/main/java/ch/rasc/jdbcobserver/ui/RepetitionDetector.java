@@ -11,7 +11,7 @@ final class RepetitionDetector {
 
 	enum Pattern {
 
-		NONE, REDUNDANT, N_PLUS_ONE, BATCH_CANDIDATE
+		NONE, REDUNDANT, N_PLUS_ONE, BATCH_CANDIDATE, AUTOCOMMIT_WRITE_LOOP
 
 	}
 
@@ -37,7 +37,7 @@ final class RepetitionDetector {
 			return;
 		}
 		var key = new Key(event.fingerprint(), event.callSite(), event.thread(), event.connection(),
-				event.transactionId(), statementType);
+				event.transactionId(), event.autoCommit(), statementType);
 		var window = this.windows.computeIfAbsent(key, ignored -> new ArrayDeque<>());
 		var oldest = event.timestamp().toEpochMilli() - this.windowMillis;
 		while (!window.isEmpty() && window.getFirst().timestamp().toEpochMilli() < oldest) {
@@ -45,7 +45,7 @@ final class RepetitionDetector {
 		}
 		window.addLast(event);
 		if (window.size() >= this.threshold) {
-			var pattern = classify(window, statementType);
+			var pattern = classify(window, statementType, event.autoCommit());
 			var detection = new Detection(pattern, window.size());
 			window.forEach(item -> this.detections.put(item.id(), detection));
 		}
@@ -62,7 +62,7 @@ final class RepetitionDetector {
 			return;
 		}
 		var key = new Key(event.fingerprint(), event.callSite(), event.thread(), event.connection(),
-				event.transactionId(), statementType);
+				event.transactionId(), event.autoCommit(), statementType);
 		var window = this.windows.get(key);
 		if (window == null) {
 			return;
@@ -103,12 +103,15 @@ final class RepetitionDetector {
 		this.detections.clear();
 	}
 
-	private static Pattern classify(Iterable<SqlEvent> window, StatementType statementType) {
+	private static Pattern classify(Iterable<SqlEvent> window, StatementType statementType, boolean autoCommit) {
 		var invocations = new HashSet<Invocation>();
 		for (var event : window) {
 			invocations.add(invocation(event));
 			if (invocations.size() > 1) {
-				return statementType == StatementType.READ ? Pattern.N_PLUS_ONE : Pattern.BATCH_CANDIDATE;
+				if (statementType == StatementType.READ) {
+					return Pattern.N_PLUS_ONE;
+				}
+				return autoCommit ? Pattern.AUTOCOMMIT_WRITE_LOOP : Pattern.BATCH_CANDIDATE;
 			}
 		}
 		return Pattern.REDUNDANT;
@@ -148,7 +151,7 @@ final class RepetitionDetector {
 	}
 
 	private record Key(String fingerprint, String callSite, String thread, String connection, long transactionId,
-			StatementType statementType) {
+			boolean autoCommit, StatementType statementType) {
 	}
 
 }

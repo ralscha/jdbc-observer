@@ -1,5 +1,6 @@
 package ch.rasc.jdbcobserver.ui;
 
+import static ch.rasc.jdbcobserver.ui.RepetitionDetector.Pattern.AUTOCOMMIT_WRITE_LOOP;
 import static ch.rasc.jdbcobserver.ui.RepetitionDetector.Pattern.BATCH_CANDIDATE;
 import static ch.rasc.jdbcobserver.ui.RepetitionDetector.Pattern.NONE;
 import static ch.rasc.jdbcobserver.ui.RepetitionDetector.Pattern.N_PLUS_ONE;
@@ -73,6 +74,19 @@ class RepetitionDetectorTest {
 	}
 
 	@Test
+	void upgradesAutocommitWritesToWriteLoops() {
+		var detector = new RepetitionDetector();
+		var started = Instant.parse("2026-01-01T00:00:00Z");
+		for (int index = 1; index <= 5; index++) {
+			detector.add(event(index, started.plusMillis(index * 10L), SqlEvent.Kind.UPDATE, "update child",
+					Map.of(1, Integer.toString(index)), 0, "save", true));
+		}
+
+		assertDetection(detector, 1, AUTOCOMMIT_WRITE_LOOP, 5);
+		assertDetection(detector, 5, AUTOCOMMIT_WRITE_LOOP, 5);
+	}
+
+	@Test
 	void classifiesIdenticalWritesAsRedundant() {
 		var detector = new RepetitionDetector();
 		var started = Instant.parse("2026-01-01T00:00:00Z");
@@ -118,30 +132,37 @@ class RepetitionDetectorTest {
 		var transactions = new RepetitionDetector();
 		for (int index = 1; index <= 5; index++) {
 			transactions.add(event(index, started.plusMillis(index), SqlEvent.Kind.QUERY, "select child",
-					Map.of(1, Integer.toString(index)), index, "find", "worker", "connection"));
+					Map.of(1, Integer.toString(index)), index, "find", "worker", "connection", false));
 		}
 		assertDetection(transactions, 5, NONE, 0);
 
 		var callSites = new RepetitionDetector();
 		for (int index = 1; index <= 5; index++) {
 			callSites.add(event(index, started.plusMillis(index), SqlEvent.Kind.QUERY, "select child",
-					Map.of(1, Integer.toString(index)), 1, "find-" + index, "worker", "connection"));
+					Map.of(1, Integer.toString(index)), 1, "find-" + index, "worker", "connection", false));
 		}
 		assertDetection(callSites, 5, NONE, 0);
 
 		var threads = new RepetitionDetector();
 		for (int index = 1; index <= 5; index++) {
 			threads.add(event(index, started.plusMillis(index), SqlEvent.Kind.QUERY, "select child",
-					Map.of(1, Integer.toString(index)), 1, "find", "worker-" + index, "connection"));
+					Map.of(1, Integer.toString(index)), 1, "find", "worker-" + index, "connection", false));
 		}
 		assertDetection(threads, 5, NONE, 0);
 
 		var connections = new RepetitionDetector();
 		for (int index = 1; index <= 5; index++) {
 			connections.add(event(index, started.plusMillis(index), SqlEvent.Kind.QUERY, "select child",
-					Map.of(1, Integer.toString(index)), 1, "find", "worker", "connection-" + index));
+					Map.of(1, Integer.toString(index)), 1, "find", "worker", "connection-" + index, false));
 		}
 		assertDetection(connections, 5, NONE, 0);
+
+		var autocommitModes = new RepetitionDetector();
+		for (int index = 1; index <= 5; index++) {
+			autocommitModes.add(event(index, started.plusMillis(index), SqlEvent.Kind.UPDATE, "update child",
+					Map.of(1, Integer.toString(index)), 0, "save", index % 2 == 0));
+		}
+		assertDetection(autocommitModes, 5, NONE, 0);
 	}
 
 	@Test
@@ -183,13 +204,21 @@ class RepetitionDetectorTest {
 
 	private static SqlEvent event(long id, Instant timestamp, SqlEvent.Kind kind, String fingerprint,
 			Map<Integer, String> parameters, long transactionId, String callSite) {
-		return event(id, timestamp, kind, fingerprint, parameters, transactionId, callSite, "worker", "connection");
+		return event(id, timestamp, kind, fingerprint, parameters, transactionId, callSite, "worker", "connection",
+				false);
 	}
 
 	private static SqlEvent event(long id, Instant timestamp, SqlEvent.Kind kind, String fingerprint,
-			Map<Integer, String> parameters, long transactionId, String callSite, String thread, String connection) {
+			Map<Integer, String> parameters, long transactionId, String callSite, boolean autoCommit) {
+		return event(id, timestamp, kind, fingerprint, parameters, transactionId, callSite, "worker", "connection",
+				autoCommit);
+	}
+
+	private static SqlEvent event(long id, Instant timestamp, SqlEvent.Kind kind, String fingerprint,
+			Map<Integer, String> parameters, long transactionId, String callSite, String thread, String connection,
+			boolean autoCommit) {
 		return new SqlEvent(id, 0, transactionId, timestamp, thread, connection, kind, fingerprint, fingerprint,
-				parameters, Map.of(), 1, 0, 0, 1, true, "", 0, false, 2, "jdbc:test", "", fingerprint,
+				parameters, Map.of(), 1, 0, 0, 1, true, "", 0, autoCommit, 2, "jdbc:test", "", fingerprint,
 				"example.Repository." + callSite + "(Repository.java:42)", "");
 	}
 

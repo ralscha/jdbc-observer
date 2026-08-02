@@ -189,6 +189,7 @@ final class EventTableModel extends AbstractTableModel {
 			case REDUNDANT -> labels.add("Redundant \u00d7" + repetition.repetitions());
 			case N_PLUS_ONE -> labels.add("N+1 \u00d7" + repetition.repetitions());
 			case BATCH_CANDIDATE -> labels.add("Batch candidate \u00d7" + repetition.repetitions());
+			case AUTOCOMMIT_WRITE_LOOP -> labels.add("Autocommit write loop \u00d7" + repetition.repetitions());
 		}
 		switch (this.cartesianProducts.getOrDefault(event.id(), Finding.NONE)) {
 			case NONE -> {

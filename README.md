@@ -32,7 +32,7 @@ java -javaagent:observer-agent/target/observer-agent.jar=mode=client,host=127.0.
 - separate execution, result-set fetch, and total result-set usage timing
 - query timeout, autocommit state, and transaction isolation at execution time
 - normalized SQL fingerprints, application call-site attribution, and thresholded stack traces
-- classification of redundant SQL, N+1 reads, and writes that should use JDBC batching
+- classification of redundant SQL, N+1 reads, writes that should use JDBC batching, and autocommit write loops
 - conservative Cartesian-product detection for explicit `CROSS JOIN` and unconstrained comma joins
 - warnings for `UPDATE` and `DELETE` statements without a same-level `WHERE` clause
 - transaction timelines with statements, savepoints, commits, rollbacks, isolation changes, and autocommit transitions
@@ -58,7 +58,8 @@ same call site, thread, connection, and, when present, explicit transaction:
 
 - `Redundant` when every execution uses the same bound values or concrete SQL
 - `N+1` when a read repeats with different bound values or literal SQL
-- `Batch candidate` when a non-batched write repeats with different bound values or literal SQL
+- `Batch candidate` when a transactional, non-batched write repeats with different bound values or literal SQL
+- `Autocommit write loop` when those writes run with autocommit enabled and therefore commit independently
 
 Actual JDBC batch executions are excluded. Use **Settings > Repeated SQL detection** to change the threshold and
 window at runtime; retained events are re-evaluated immediately. System properties set the startup defaults:

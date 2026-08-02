@@ -424,7 +424,7 @@ public final class ObserverApp extends JFrame {
 	}
 
 	private void configureTableColumns() {
-		int[] widths = { 100, 110, 180, 90, 80, 90, 70, 75, 95, 130, 160, 160, 260, 420, 80 };
+		int[] widths = { 100, 110, 220, 90, 80, 90, 70, 75, 95, 130, 160, 160, 260, 420, 80 };
 		for (int column = 0; column < widths.length; column++) {
 			this.table.getColumnModel().getColumn(column).setPreferredWidth(widths[column]);
 		}

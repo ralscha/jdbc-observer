@@ -72,20 +72,26 @@ class EventTableModelTest {
 	}
 
 	@Test
-	void reportsRedundantAndBatchCandidateLabels() {
+	void reportsRedundantBatchCandidateAndAutocommitWriteLoopLabels() {
 		var model = new EventTableModel(10);
 		model.configureRepetitionDetection(2, 10_000);
 		model.add(event(1, SqlEvent.Kind.QUERY, "select * from child where id = 1", "select child", true));
 		model.add(event(2, SqlEvent.Kind.QUERY, "select * from child where id = 1", "select child", true));
 		model.add(event(3, SqlEvent.Kind.UPDATE, "update child set name = 'a' where id = 1",
-				"update child set name = ? where id = ?", true));
+				"update child set name = ? where id = ?", true, false));
 		model.add(event(4, SqlEvent.Kind.UPDATE, "update child set name = 'b' where id = 2",
-				"update child set name = ? where id = ?", true));
+				"update child set name = ? where id = ?", true, false));
+		model.add(event(5, SqlEvent.Kind.UPDATE, "update item set name = 'a' where id = 1",
+				"update item set name = ? where id = ?", true, true));
+		model.add(event(6, SqlEvent.Kind.UPDATE, "update item set name = 'b' where id = 2",
+				"update item set name = ? where id = ?", true, true));
 
 		assertEquals("Redundant \u00d72", model.getValueAt(0, 2));
 		assertEquals("Redundant \u00d72", model.getValueAt(1, 2));
 		assertEquals("Batch candidate \u00d72", model.getValueAt(2, 2));
 		assertEquals("Batch candidate \u00d72", model.getValueAt(3, 2));
+		assertEquals("Autocommit write loop \u00d72", model.getValueAt(4, 2));
+		assertEquals("Autocommit write loop \u00d72", model.getValueAt(5, 2));
 	}
 
 	@Test
@@ -116,9 +122,14 @@ class EventTableModelTest {
 	}
 
 	private static SqlEvent event(long id, SqlEvent.Kind kind, String sql, String fingerprint, boolean success) {
-		return new SqlEvent(id, 0, 1, Instant.ofEpochSecond(id), "worker", "connection", kind, sql, sql, Map.of(),
-				Map.of(), id * 1_000_000, 0, 0, -1, success, success ? "" : "failed", 0, true, 2, "jdbc:test", "",
-				fingerprint, "example.Repository.find(Repository.java:42)", "");
+		return event(id, kind, sql, fingerprint, success, true);
+	}
+
+	private static SqlEvent event(long id, SqlEvent.Kind kind, String sql, String fingerprint, boolean success,
+			boolean autoCommit) {
+		return new SqlEvent(id, 0, autoCommit ? 0 : 1, Instant.ofEpochSecond(id), "worker", "connection", kind, sql,
+				sql, Map.of(), Map.of(), id * 1_000_000, 0, 0, -1, success, success ? "" : "failed", 0, autoCommit, 2,
+				"jdbc:test", "", fingerprint, "example.Repository.find(Repository.java:42)", "");
 	}
 
 	private static SqlEvent resultSetEvent(long id, long parentId, long rows, boolean success) {
