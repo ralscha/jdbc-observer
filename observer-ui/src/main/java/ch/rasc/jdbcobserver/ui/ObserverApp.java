@@ -424,7 +424,7 @@ public final class ObserverApp extends JFrame {
 	}
 
 	private void configureTableColumns() {
-		int[] widths = { 100, 110, 90, 90, 80, 90, 70, 75, 95, 130, 160, 160, 260, 420, 80 };
+		int[] widths = { 100, 110, 180, 90, 80, 90, 70, 75, 95, 130, 160, 160, 260, 420, 80 };
 		for (int column = 0; column < widths.length; column++) {
 			this.table.getColumnModel().getColumn(column).setPreferredWidth(widths[column]);
 		}
@@ -738,7 +738,9 @@ public final class ObserverApp extends JFrame {
 			updateExplainState();
 			return;
 		}
-		var selectedEvent = this.model.get(this.table.convertRowIndexToModel(row));
+		var modelRow = this.table.convertRowIndexToModel(row);
+		var selectedEvent = this.model.get(modelRow);
+		var detectedPattern = this.model.getValueAt(modelRow, 2).toString();
 		this.detail.setText("Raw SQL\n" + value(selectedEvent.rawSql()) + "\n\nRendered SQL\n"
 				+ value(selectedEvent.sql()) + "\n\nParameters\n"
 				+ (selectedEvent.parameters().isEmpty() ? "\u2014" : selectedEvent.parameters())
@@ -753,7 +755,7 @@ public final class ObserverApp extends JFrame {
 				+ (selectedEvent.transactionId() == 0 ? "\u2014" : selectedEvent.transactionId()) + "\n\nConnection\n"
 				+ value(selectedEvent.connectionUrl()) + "\n" + value(selectedEvent.connectionProperties())
 				+ "\n\nAttribution\nFingerprint: " + value(selectedEvent.fingerprint()) + "\nCall site: "
-				+ value(selectedEvent.callSite())
+				+ value(selectedEvent.callSite()) + "\nDetected pattern: " + value(detectedPattern)
 				+ (selectedEvent.stackTrace().isBlank() ? "" : "\n\nCaptured stack\n" + selectedEvent.stackTrace())
 				+ (selectedEvent.error().isBlank() ? "" : "\n\nError\n" + selectedEvent.error()));
 		this.detail.setCaretPosition(0);
@@ -1128,13 +1130,14 @@ public final class ObserverApp extends JFrame {
 			if (!selected) {
 				var modelRow = source.convertRowIndexToModel(row);
 				var event = model.get(modelRow);
-				var nPlusOne = model.getValueAt(modelRow, 2).toString().startsWith("N+1");
+				var detectedPattern = model.getValueAt(modelRow, 2).toString();
+				var hasDetectedPattern = !detectedPattern.isBlank();
 				var matches = !filter.getText().isBlank()
 						&& searchable(event).contains(filter.getText().toLowerCase(Locale.ROOT));
 				var failureColor = darkMode ? new Color(95, 35, 45) : new Color(255, 220, 224);
-				var nPlusOneColor = darkMode ? new Color(105, 55, 20) : new Color(255, 231, 190);
+				var patternColor = darkMode ? new Color(105, 55, 20) : new Color(255, 231, 190);
 				var highlightColor = darkMode ? new Color(30, 65, 90) : new Color(218, 238, 255);
-				component.setBackground(!event.success() ? failureColor : nPlusOne ? nPlusOneColor
+				component.setBackground(!event.success() ? failureColor : hasDetectedPattern ? patternColor
 						: highlightMatches.isSelected() && matches ? highlightColor : source.getBackground());
 			}
 			return component;

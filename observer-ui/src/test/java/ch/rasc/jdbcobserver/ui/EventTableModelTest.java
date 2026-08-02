@@ -52,10 +52,22 @@ class EventTableModelTest {
 		assertEquals(7, model.observedRowCount());
 	}
 
+	@Test
+	void reportsCartesianProductSyntaxInThePatternColumn() {
+		var model = new EventTableModel(10);
+		model.add(event(1, "select * from customer cross join country", "cartesian", true));
+
+		assertEquals("Cartesian (CROSS JOIN)", model.getValueAt(0, 2));
+	}
+
 	private static SqlEvent event(long id, String fingerprint, boolean success) {
-		return new SqlEvent(id, 0, 1, Instant.ofEpochSecond(id), "worker", "connection", SqlEvent.Kind.QUERY, "select",
-				"select", Map.of(), Map.of(), id * 1_000_000, 0, 0, -1, success, success ? "" : "failed", 0, true, 2,
-				"jdbc:test", "", fingerprint, "example.Repository.find(Repository.java:42)", "");
+		return event(id, "select", fingerprint, success);
+	}
+
+	private static SqlEvent event(long id, String sql, String fingerprint, boolean success) {
+		return new SqlEvent(id, 0, 1, Instant.ofEpochSecond(id), "worker", "connection", SqlEvent.Kind.QUERY, sql, sql,
+				Map.of(), Map.of(), id * 1_000_000, 0, 0, -1, success, success ? "" : "failed", 0, true, 2, "jdbc:test",
+				"", fingerprint, "example.Repository.find(Repository.java:42)", "");
 	}
 
 	private static SqlEvent resultSetEvent(long id, long parentId, long rows, boolean success) {

@@ -33,6 +33,7 @@ java -javaagent:observer-agent/target/observer-agent.jar=mode=client,host=127.0.
 - query timeout, autocommit state, and transaction isolation at execution time
 - normalized SQL fingerprints, application call-site attribution, and thresholded stack traces
 - N+1 detection for repeated fingerprints from the same call site, thread, and connection
+- conservative Cartesian-product detection for explicit `CROSS JOIN` and unconstrained comma joins
 - transaction timelines with statements, savepoints, commits, rollbacks, isolation changes, and autocommit transitions
 - all current JDBC interfaces from the Java 25 platform (JDBC 4.3)
 
@@ -56,6 +57,17 @@ The UI marks an `N+1` pattern when the same normalized SQL fingerprint is execut
 ```shell
 java -DjdbcObserver.nPlusOneThreshold=10 -DjdbcObserver.nPlusOneWindowMillis=2000 -jar observer-ui.jar
 ```
+
+### Cartesian-product detection
+
+The UI marks definite Cartesian-product syntax in the **Pattern** column. It detects explicit `CROSS JOIN`
+operators and simple comma-separated `FROM` lists that have no `WHERE` clause at the same query level. The
+analysis ignores comments, string literals, quoted identifiers, function arguments, and comma joins constrained
+by a `WHERE` clause.
+
+This is intentionally a conservative syntax warning. JDBC row counts do not reveal the expected cardinality, so
+large result sets and complex joins are not guessed to be Cartesian products. Intentional cross joins are still
+marked and should be reviewed rather than assumed to be defects.
 
 ### Theme
 

@@ -3,10 +3,14 @@ package ch.rasc.jdbcobserver.ui;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import javax.swing.table.AbstractTableModel;
 
+import ch.rasc.jdbcobserver.core.CartesianProductDetector;
+import ch.rasc.jdbcobserver.core.CartesianProductDetector.Finding;
 import ch.rasc.jdbcobserver.core.SqlEvent;
 
 final class EventTableModel extends AbstractTableModel {
@@ -19,6 +23,8 @@ final class EventTableModel extends AbstractTableModel {
 	private final int limit;
 
 	private final NPlusOneDetector nPlusOneDetector = new NPlusOneDetector();
+
+	private final Map<Long, Finding> cartesianProducts = new HashMap<>();
 
 	private double totalDurationMillis;
 
@@ -51,11 +57,16 @@ final class EventTableModel extends AbstractTableModel {
 			}
 			this.events.add(event);
 			this.nPlusOneDetector.add(event);
+			var cartesianProduct = CartesianProductDetector.detect(sql(event));
+			if (cartesianProduct != Finding.NONE) {
+				this.cartesianProducts.put(event.id(), cartesianProduct);
+			}
 			addMetrics(event);
 		}
 		while (this.events.size() > this.limit) {
 			var removed = this.events.removeFirst();
 			this.nPlusOneDetector.remove(removed);
+			this.cartesianProducts.remove(removed.id());
 			removeMetrics(removed);
 		}
 		fireTableDataChanged();
@@ -64,6 +75,7 @@ final class EventTableModel extends AbstractTableModel {
 	void clear() {
 		this.events.clear();
 		this.nPlusOneDetector.clear();
+		this.cartesianProducts.clear();
 		this.totalDurationMillis = 0;
 		this.failedCount = 0;
 		this.rowCount = 0;
@@ -141,8 +153,7 @@ final class EventTableModel extends AbstractTableModel {
 		return switch (column) {
 			case 0 -> event.timestamp();
 			case 1 -> typeLabel(event.kind());
-			case 2 -> this.nPlusOneDetector.repetitions(event.id()) == 0 ? ""
-					: "N+1 \u00d7" + this.nPlusOneDetector.repetitions(event.id());
+			case 2 -> pattern(event);
 			case 3 -> event.durationNanos() == 0 ? null : event.durationMillis();
 			case 4 -> event.fetchNanos() == 0 ? null : event.fetchMillis();
 			case 5 -> event.resultSetUseNanos() == 0 ? null : event.resultSetUseMillis();
@@ -156,6 +167,27 @@ final class EventTableModel extends AbstractTableModel {
 			case 13 -> event.sql().isBlank() ? event.rawSql() : event.sql();
 			default -> event.success() ? "OK" : "FAILED";
 		};
+	}
+
+	private String pattern(SqlEvent event) {
+		int repetitions = this.nPlusOneDetector.repetitions(event.id());
+		String nPlusOne = repetitions == 0 ? "" : "N+1 \u00d7" + repetitions;
+		String cartesianProduct = switch (this.cartesianProducts.getOrDefault(event.id(), Finding.NONE)) {
+			case NONE -> "";
+			case EXPLICIT_CROSS_JOIN -> "Cartesian (CROSS JOIN)";
+			case UNCONSTRAINED_COMMA_JOIN -> "Cartesian (comma join)";
+		};
+		if (nPlusOne.isBlank()) {
+			return cartesianProduct;
+		}
+		return cartesianProduct.isBlank() ? nPlusOne : nPlusOne + "; " + cartesianProduct;
+	}
+
+	private static String sql(SqlEvent event) {
+		if (!event.rawSql().isBlank()) {
+			return event.rawSql();
+		}
+		return event.sql().isBlank() ? event.fingerprint() : event.sql();
 	}
 
 	private void addMetrics(SqlEvent event) {
