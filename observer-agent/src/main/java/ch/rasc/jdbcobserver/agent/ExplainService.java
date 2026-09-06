@@ -11,7 +11,6 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import javax.sql.DataSource;
-import javax.sql.PooledConnection;
 
 final class ExplainService {
 
@@ -32,7 +31,9 @@ final class ExplainService {
 		if (!TARGETS.containsKey(connectionId) && TARGETS.size() >= MAX_TARGETS) {
 			TARGETS.remove(TARGETS.keySet().iterator().next());
 		}
-		var reusableSource = source instanceof DataSource || source instanceof PooledConnection ? source : null;
+		// PooledConnection.getConnection() invalidates its previous logical connection.
+		// Only a DataSource can safely lend an independent replacement for an old event.
+		var reusableSource = source instanceof DataSource ? source : null;
 		TARGETS.put(connectionId, new Target(connection, reusableSource));
 	}
 
@@ -100,7 +101,6 @@ final class ExplainService {
 		}
 		return ConnectionInterceptor.withoutObservation(() -> switch (source) {
 			case DataSource dataSource -> dataSource.getConnection();
-			case PooledConnection pooledConnection -> pooledConnection.getConnection();
 			default -> throw new SQLException("The original JDBC source cannot create another connection");
 		});
 	}

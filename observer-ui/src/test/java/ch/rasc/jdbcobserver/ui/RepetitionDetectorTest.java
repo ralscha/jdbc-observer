@@ -113,6 +113,24 @@ class RepetitionDetectorTest {
 	}
 
 	@Test
+	void classifiesGenericExecuteReadsAndWritesIncludingCtes() {
+		var detector = new RepetitionDetector();
+		var started = Instant.parse("2026-01-01T00:00:00Z");
+		for (int index = 1; index <= 5; index++) {
+			detector.add(event(index, started.plusMillis(index), SqlEvent.Kind.EXECUTE,
+					"/* lookup */ with ids as (select 1) select * from child where id = ?", Map.of(1, "" + index), 1,
+					"find"));
+			detector.add(event(index + 5, started.plusMillis(index), SqlEvent.Kind.EXECUTE,
+					"with ids as (select 1) update child set name = ?", Map.of(1, "" + index), 0, "save", true));
+			detector.add(event(index + 10, started.plusMillis(index), SqlEvent.Kind.EXECUTE, "call unknown(?)",
+					Map.of(1, "" + index), 0, "call", true));
+		}
+		assertDetection(detector, 5, N_PLUS_ONE, 5);
+		assertDetection(detector, 10, AUTOCOMMIT_WRITE_LOOP, 5);
+		assertDetection(detector, 15, NONE, 0);
+	}
+
+	@Test
 	void ignoresExecutionsThatAreAlreadyBatched() {
 		var detector = new RepetitionDetector();
 		var started = Instant.parse("2026-01-01T00:00:00Z");

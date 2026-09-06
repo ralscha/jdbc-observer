@@ -12,10 +12,12 @@ import java.lang.reflect.Proxy;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
 import java.util.Map;
+import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -41,6 +43,80 @@ class JdbcProxyTest {
 				first.close();
 			}
 		}
+	}
+
+	@Test
+	void releasesResultSetsOnCloseAndStatementReuse() throws Exception {
+		try (var raw = java.sql.DriverManager.getConnection("jdbc:h2:mem:result-reuse")) {
+			var connection = JdbcProxy.wrapConnection(raw);
+			try (var statement = connection.prepareStatement("select 42")) {
+				for (int index = 0; index < 20; index++) {
+					var result = statement.executeQuery();
+					assertTrue(result.next());
+					assertFalse(result.next());
+					assertSame(result, statement.getResultSet());
+					assertEquals(1, ((Map<?, ?>) field((Object) handler(statement), "resultSets")).size());
+				}
+				statement.getResultSet().close();
+				assertTrue(((Map<?, ?>) field((Object) handler(statement), "resultSets")).isEmpty());
+			}
+		}
+	}
+
+	@Test
+	void closeCurrentResultDoesNotReportResultsKeptOpenEarlier() throws Exception {
+		var current = new AtomicInteger();
+		var results = List.of(proxy(ResultSet.class, (p, m, a) -> defaultValue(m.getReturnType())),
+				proxy(ResultSet.class, (p, m, a) -> defaultValue(m.getReturnType())));
+		var raw = proxy(Statement.class, (p, method, arguments) -> switch (method.getName()) {
+			case "execute" -> true;
+			case "getResultSet" -> results.get(current.get());
+			case "getMoreResults" -> current.incrementAndGet() < results.size();
+			default -> defaultValue(method.getReturnType());
+		});
+		var statement = JdbcProxy.wrapConnection(fakeConnection(raw, false)).createStatement();
+		statement.execute("call results()");
+		var first = statement.getResultSet();
+		assertTrue(statement.getMoreResults(Statement.KEEP_CURRENT_RESULT));
+		var second = statement.getResultSet();
+		assertFalse(statement.getMoreResults(Statement.CLOSE_CURRENT_RESULT));
+		assertFalse((Boolean) field((Object) handler(first), "resultSetReported"));
+		assertTrue((Boolean) field((Object) handler(second), "resultSetReported"));
+		statement.getMoreResults(Statement.CLOSE_ALL_RESULTS);
+		assertTrue((Boolean) field((Object) handler(first), "resultSetReported"));
+		assertTrue(((Map<?, ?>) field((Object) handler(statement), "resultSets")).isEmpty());
+	}
+
+	@Test
+	void clearsCapturedBatchesAfterSuccessAndFailure() throws Exception {
+		try (var raw = java.sql.DriverManager.getConnection("jdbc:h2:mem:batch-reuse")) {
+			var connection = JdbcProxy.wrapConnection(raw);
+			try (var statement = connection.createStatement()) {
+				statement.execute("create table item(id int primary key)");
+				statement.addBatch("insert into item values (1)");
+				statement.executeBatch();
+				assertTrue(((List<?>) field((Object) handler(statement), "batch")).isEmpty());
+				statement.addBatch("insert into item values (1)");
+				assertThrows(java.sql.BatchUpdateException.class, statement::executeLargeBatch);
+				assertTrue(((List<?>) field((Object) handler(statement), "batch")).isEmpty());
+				statement.addBatch("insert into item values (2)");
+				assertEquals(List.of("insert into item values (2)"), field((Object) handler(statement), "batch"));
+			}
+		}
+	}
+
+	@Test
+	void boundsCapturedBatchTextAsEntriesAreAdded() throws Exception {
+		var raw = proxy(Statement.class, (p, m, a) -> defaultValue(m.getReturnType()));
+		var statement = JdbcProxy.wrapConnection(fakeConnection(raw, false)).createStatement();
+		for (int index = 0; index < 100; index++) {
+			statement.addBatch("x".repeat(50_000));
+		}
+		assertTrue((Integer) field((Object) handler(statement), "batchCharacters") <= 1_000_000);
+		assertTrue((Boolean) field((Object) handler(statement), "batchTruncated"));
+		statement.clearBatch();
+		assertEquals(0, field((Object) handler(statement), "batchCharacters"));
+		assertFalse((Boolean) field((Object) handler(statement), "batchTruncated"));
 	}
 
 	@Test
@@ -115,6 +191,13 @@ class JdbcProxyTest {
 	void redactsSecretsInUrlsAndProperties() throws Exception {
 		assertEquals("jdbc:test?user=demo&password=***&token=***",
 				ConnectionInterceptor.redactUrl("jdbc:test?user=demo&password=hidden&token=secret"));
+		assertEquals("jdbc:test;credential=***;clientSecret=***;PWD=***;user=demo", ConnectionInterceptor
+			.redactUrl("jdbc:test;credential=hidden;clientSecret=hidden;PWD=hidden;user=demo"));
+		assertEquals("jdbc:test?access_token=***&pass%77ord=***&path=$1\\data",
+				ConnectionInterceptor.redactUrl("jdbc:test?access_token=hidden&pass%77ord=hidden&path=$1\\data"));
+		assertEquals("jdbc:test:(password=***)", ConnectionInterceptor.redactUrl("jdbc:test:(password=hidden)"));
+		assertEquals("jdbc:test;password=***;user=demo",
+				ConnectionInterceptor.redactUrl("jdbc:test;password={semi;colon}}secret};user=demo"));
 		var properties = new Properties();
 		properties.setProperty("user", "demo");
 		properties.setProperty("password", "hidden");

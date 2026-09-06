@@ -6,6 +6,7 @@ import java.util.HashSet;
 import java.util.Map;
 
 import ch.rasc.jdbcobserver.core.SqlEvent;
+import ch.rasc.jdbcobserver.core.SqlText;
 
 final class RepetitionDetector {
 
@@ -129,6 +130,11 @@ final class RepetitionDetector {
 		return switch (event.kind()) {
 			case QUERY -> StatementType.READ;
 			case UPDATE -> StatementType.WRITE;
+			case EXECUTE -> switch (SqlText.operation(event.rawSql().isBlank() ? event.sql() : event.rawSql())) {
+				case "select", "values", "table" -> StatementType.READ;
+				case "insert", "update", "delete", "merge" -> StatementType.WRITE;
+				default -> null;
+			};
 			default -> null;
 		};
 	}

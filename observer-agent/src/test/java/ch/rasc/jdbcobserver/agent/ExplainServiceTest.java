@@ -51,6 +51,34 @@ class ExplainServiceTest {
 	}
 
 	@Test
+	void explainingAnOldPooledConnectionDoesNotInvalidateItsCurrentBorrower() throws Exception {
+		var dataSource = new JdbcDataSource();
+		dataSource.setURL("jdbc:h2:mem:explain_pooled");
+		var pooled = dataSource.getPooledConnection();
+		try {
+			var original = pooled.getConnection();
+			ExplainService.register("c-pooled", original, pooled);
+			var live = ExplainService.explain(new ControlCodec.ExplainRequest(11, "c-pooled", "select 1"));
+			assertTrue(live.success(), live.error());
+			original.close();
+			ExplainService.unregister("c-pooled");
+			try (var current = pooled.getConnection()) {
+				var response = ExplainService.explain(new ControlCodec.ExplainRequest(12, "c-pooled", "select 1"));
+				assertFalse(response.success());
+				assertFalse(current.isClosed(), "EXPLAIN must not replace another application's logical connection");
+				try (var statement = current.createStatement(); var result = statement.executeQuery("select 42")) {
+					assertTrue(result.next());
+					assertEquals(42, result.getInt(1));
+				}
+			}
+		}
+		finally {
+			ExplainService.unregister("c-pooled");
+			pooled.close();
+		}
+	}
+
+	@Test
 	void borrowsAReplacementConnectionFromTheOriginatingDataSource() throws Exception {
 		var dataSource = new JdbcDataSource();
 		dataSource.setURL("jdbc:h2:mem:explain_source;DB_CLOSE_DELAY=-1");

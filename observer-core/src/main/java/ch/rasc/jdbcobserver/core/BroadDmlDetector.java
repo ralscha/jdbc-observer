@@ -137,10 +137,10 @@ public final class BroadDmlDetector {
 				index = end;
 			}
 			else if (current == '"' || current == '`') {
-				index = quotedIdentifierEnd(sql, index + 1, current);
+				index = SqlText.quotedEnd(sql, index);
 			}
 			else if (current == '[') {
-				index = bracketIdentifierEnd(sql, index + 1);
+				index = SqlText.quotedEnd(sql, index);
 			}
 			else {
 				switch (current) {
@@ -160,34 +160,6 @@ public final class BroadDmlDetector {
 			}
 		}
 		return tokens;
-	}
-
-	private static int quotedIdentifierEnd(String sql, int index, char quote) {
-		while (index < sql.length()) {
-			if (sql.charAt(index++) == quote) {
-				if (index < sql.length() && sql.charAt(index) == quote) {
-					index++;
-				}
-				else {
-					break;
-				}
-			}
-		}
-		return index;
-	}
-
-	private static int bracketIdentifierEnd(String sql, int index) {
-		while (index < sql.length()) {
-			if (sql.charAt(index++) == ']') {
-				if (index < sql.length() && sql.charAt(index) == ']') {
-					index++;
-				}
-				else {
-					break;
-				}
-			}
-		}
-		return index;
 	}
 
 	private static boolean isWordPart(char value) {

@@ -38,6 +38,15 @@ java -javaagent:observer-agent/target/observer-agent.jar=mode=client,host=127.0.
 - transaction timelines with statements, savepoints, commits, rollbacks, isolation changes, and autocommit transitions
 - all current JDBC interfaces from the Java 25 platform (JDBC 4.3)
 
+Each batch execution clears its captured entries, and reusing a statement releases telemetry references to prior result sets.
+Batch text is bounded while entries are added. Partial batch failures retain the available update counts;
+an unknown driver count stays unknown. Generic `execute()` calls also report their first update count.
+The UI combines rows and fetch time from multiple query result sets and preserves affected-row counts when
+generated keys are read.
+
+Parameter rendering preserves quoted text and nested comments, including PostgreSQL dollar-quoted strings,
+escaped `??` operators, and array parameters. Truncated SQL is marked with an ellipsis.
+
 The UI provides filtering/highlighting, minimum-duration filtering, a SQL-statements-only view, correctly typed sorting, pause/resume, per-event details, on-demand execution plans, grouped cumulative SQL analysis, connection metadata, aggregate metrics, bounded batch ingestion, bounded history, light/dark styling, complete asynchronous CSV export, and runtime SQL throttling. Pause and Clear stay available in the command bar; on narrower windows, the minimum-duration control collapses into the **Filters** popup. SQL-only filtering, highlighting, and auto-scroll are available from the **View** menu. Set the history limit with `-DmaxLoggedStatements=50000` (the default is 20,000). Pausing intentionally discards incoming events until capture is resumed.
 
 Agent server mode binds only to loopback and accepts one active UI at a time; a newer UI connection replaces the previous one. UI listener mode intentionally opens the configured local port and should be exposed only on trusted networks. The protocol is unencrypted and unauthenticated. SQL and bound values can contain sensitive application data, so do not send telemetry over an untrusted network. Connection property and URL keys commonly used for passwords, secrets, credentials, and tokens are redacted.
@@ -60,6 +69,9 @@ same call site, thread, connection, and, when present, explicit transaction:
 - `N+1` when a read repeats with different bound values or literal SQL
 - `Batch candidate` when a transactional, non-batched write repeats with different bound values or literal SQL
 - `Autocommit write loop` when those writes run with autocommit enabled and therefore commit independently
+
+Queries and writes issued through generic `execute()` are classified when their SQL operation can be identified,
+including after a `WITH` clause. Unknown stored-procedure calls are excluded from this classification.
 
 Actual JDBC batch executions are excluded. Use **Settings > Repeated SQL detection** to change the threshold and
 window at runtime; retained events are re-evaluated immediately. System properties set the startup defaults:
@@ -105,6 +117,10 @@ Use **Settings > Throttler** to add an artificial delay before each observed que
 
 Select a query, update, or generic execute event and choose **Analyze > Explain selected SQL** (or press `Ctrl+E`) to request its execution plan. The agent uses the matching live JDBC connection when it is still open, or borrows a replacement from the originating data source after a pooled connection has been returned. It runs plain `EXPLAIN`, never `EXPLAIN ANALYZE`, so the selected statement is not executed. For safety, EXPLAIN requests accept one statement, time out after 10 seconds when the driver supports query timeouts, and cap returned output.
 
+Replacement connections are borrowed only through a `DataSource`. Events captured directly from a
+`PooledConnection` can be explained while their logical connection is open; once it closes, run the SQL again
+to obtain a new event. This avoids invalidating a different application borrower of the same pool entry.
+
 ### Transaction timelines
 
 Open **Analyze > Transactions** to inspect retained explicit transactions as ordered timelines. Active transactions update once per second. The view highlights transactions whose total duration or current idle time exceeds the configured threshold; both thresholds can be changed directly in the timeline window.
@@ -139,6 +155,10 @@ task demo-down       # stop the Docker demo
 
 GitHub Actions runs the complete Java 25 Maven verification build for every pull
 request and every branch push.
+
+`./mvnw verify` also runs integration smoke tests against the packaged agent in separate JVMs, covering normal
+and reverse connections, throttling, EXPLAIN, transaction events, batch reuse, partial failures, and update counts.
+These tests use temporary loopback ports and an embedded H2 database; Docker is not required.
 
 Pushing a tag whose name starts with `v` builds and tests the project, creates a
 GitHub release with automatically generated release notes, and attaches the two

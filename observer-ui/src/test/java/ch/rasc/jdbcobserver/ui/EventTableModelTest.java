@@ -53,6 +53,46 @@ class EventTableModelTest {
 	}
 
 	@Test
+	void accumulatesMultipleResultSetsAndPreservesUpdateCountsWhenReadingGeneratedKeys() {
+		var model = new EventTableModel(10);
+		model.add(event(1, "select ?", true));
+		model.add(resultSetEvent(2, 1, 7, true));
+		model.add(resultSetEvent(3, 1, 3, true));
+		assertEquals(10L, model.getValueAt(0, 6));
+		assertEquals(4.0, model.getValueAt(0, 4));
+
+		for (var kind : java.util.List.of(SqlEvent.Kind.UPDATE, SqlEvent.Kind.EXECUTE, SqlEvent.Kind.BATCH)) {
+			var write = new SqlEvent(4, 0, 0, Instant.now(), "worker", "connection", kind,
+					"insert into item values (1), (2), (3)", "", Map.of(), Map.of(), 1, 0, 0, 3, true, "", 0, true, 2,
+					"", "", "", "", "");
+			model.clear();
+			model.add(write);
+			model.add(resultSetEvent(5, 4, 1, true));
+			assertEquals(3L, model.getValueAt(0, 6));
+			assertEquals(3L, model.observedRowCount());
+		}
+	}
+
+	@Test
+	void countsRowsReturnedByGenericWritesWithoutAnUpdateCount() {
+		var model = new EventTableModel(1);
+		model.add(event(1, SqlEvent.Kind.EXECUTE, "insert into item values (1) returning id", "", true));
+		model.add(resultSetEvent(2, 1, 2, true));
+		model.add(resultSetEvent(3, 1, 3, true));
+		assertEquals(5L, model.getValueAt(0, 6));
+		// Evicting and clearing history must also discard the update-count
+		// classification.
+		model.add(event(4, SqlEvent.Kind.UPDATE, "update item set id = 2", "", true));
+		model.add(event(1, SqlEvent.Kind.QUERY, "select id from item", "", true));
+		model.add(resultSetEvent(5, 1, 7, true));
+		assertEquals(7L, model.getValueAt(0, 6));
+		model.clear();
+		model.add(event(4, SqlEvent.Kind.QUERY, "select id from item", "", true));
+		model.add(resultSetEvent(6, 4, 9, true));
+		assertEquals(9L, model.getValueAt(0, 6));
+	}
+
+	@Test
 	void reportsCartesianProductSyntaxInThePatternColumn() {
 		var model = new EventTableModel(10);
 		model.add(event(1, "select * from customer cross join country", "cartesian", true));

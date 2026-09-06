@@ -2,6 +2,7 @@ package ch.rasc.jdbcobserver.agent;
 
 import ch.rasc.jdbcobserver.core.SqlEvent;
 import ch.rasc.jdbcobserver.core.SqlFingerprint;
+import ch.rasc.jdbcobserver.core.SqlText;
 import java.io.InputStream;
 import java.io.Reader;
 import java.lang.reflect.InvocationHandler;
@@ -10,6 +11,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Proxy;
 import java.sql.Array;
+import java.sql.BatchUpdateException;
 import java.sql.Blob;
 import java.sql.CallableStatement;
 import java.sql.Clob;
@@ -63,7 +65,13 @@ public final class JdbcProxy implements InvocationHandler {
 
 	private final List<String> batch = new ArrayList<>();
 
+	private int batchCharacters;
+
+	private boolean batchTruncated;
+
 	private final Map<ResultSet, JdbcProxy> resultSets = new IdentityHashMap<>();
+
+	private ResultSet currentResultSet;
 
 	private long resultSetOpened = System.nanoTime();
 
@@ -302,19 +310,34 @@ public final class JdbcProxy implements InvocationHandler {
 		}
 		if (name.equals("clearBatch")) {
 			var result = call(method, arguments);
-			this.batch.clear();
+			clearBatch();
 			return result;
 		}
 		if (name.equals("addBatch")) {
 			var result = call(method, arguments);
-			if (this.batch.size() < MAX_BATCH_ENTRIES) {
-				this.batch
-					.add(arguments != null && arguments.length > 0 ? limit(String.valueOf(arguments[0])) : formatSql());
+			if (!this.batchTruncated) {
+				String sql = arguments != null && arguments.length > 0 ? limit(String.valueOf(arguments[0]))
+						: formatSql();
+				int remaining = MAX_TEXT_LENGTH - this.batchCharacters - (this.batch.isEmpty() ? 0 : 2);
+				if (this.batch.size() >= MAX_BATCH_ENTRIES || remaining <= 0) {
+					this.batchTruncated = true;
+				}
+				else {
+					this.batchTruncated = sql.length() > remaining;
+					String captured = this.batchTruncated ? sql.substring(0, remaining) : sql;
+					this.batchCharacters += captured.length() + (this.batch.isEmpty() ? 0 : 2);
+					this.batch.add(captured);
+				}
 			}
 			return result;
 		}
 		if (name.equals("executeBatch") || name.equals("executeLargeBatch")) {
-			return timed(method, arguments, SqlEvent.Kind.BATCH, batchSql());
+			try {
+				return timed(method, arguments, SqlEvent.Kind.BATCH, batchSql());
+			}
+			finally {
+				clearBatch();
+			}
 		}
 		if (name.startsWith("execute")) {
 			var kind = name.contains("Query") ? SqlEvent.Kind.QUERY
@@ -324,19 +347,32 @@ public final class JdbcProxy implements InvocationHandler {
 			return timed(method, arguments, kind, sql);
 		}
 		if (name.equals("getMoreResults")) {
-			if (arguments == null || arguments.length == 0
-					|| !Integer.valueOf(Statement.KEEP_CURRENT_RESULT).equals(arguments[0])) {
+			var result = call(method, arguments);
+			int disposition = arguments == null || arguments.length == 0 ? Statement.CLOSE_CURRENT_RESULT
+					: (Integer) arguments[0];
+			if (disposition == Statement.CLOSE_ALL_RESULTS) {
 				reportActiveResultSets();
 			}
-			return call(method, arguments);
+			else if (disposition == Statement.CLOSE_CURRENT_RESULT) {
+				var current = this.resultSets.remove(this.currentResultSet);
+				if (current != null) {
+					current.reportResultSet();
+				}
+			}
+			this.currentResultSet = null;
+			return result;
 		}
 		if (name.equals("getResultSet") || name.equals("getGeneratedKeys")) {
 			var result = call(method, arguments);
-			return result instanceof ResultSet value ? wrapResultSet(value, this.lastExecutionId) : result;
+			return result instanceof ResultSet value
+					? wrapResultSet(value, this.lastExecutionId, name.equals("getResultSet")) : result;
 		}
 		if (name.equals("close")) {
 			var result = call(method, arguments);
 			reportActiveResultSets();
+			clearBatch();
+			this.parameters.clear();
+			this.parameterMethods.clear();
 			return result;
 		}
 		return call(method, arguments);
@@ -371,19 +407,26 @@ public final class JdbcProxy implements InvocationHandler {
 		if (name.equals("close")) {
 			var result = call(method, arguments);
 			reportResultSet();
+			if (this.observedParent != null && isObserved(this.observedParent)) {
+				var parent = (JdbcProxy) Proxy.getInvocationHandler(this.observedParent);
+				parent.resultSets.remove(this.target, this);
+				if (parent.currentResultSet == this.target) {
+					parent.currentResultSet = null;
+				}
+			}
 			return result;
 		}
 		return call(method, arguments);
 	}
 
 	private Object timed(Method method, Object[] arguments, SqlEvent.Kind kind, String sql) throws Throwable {
-		if (isExecution(kind)) {
+		if (kind.isSqlStatement()) {
 			this.connection.beginTransactionIfNeeded();
 			reportActiveResultSets();
 		}
 		long id = AgentRuntime.nextId();
 		long started = System.nanoTime();
-		if (isExecution(kind)) {
+		if (kind.isSqlStatement()) {
 			AgentRuntime.throttleSqlExecution();
 		}
 		long rows = -1;
@@ -402,9 +445,15 @@ public final class JdbcProxy implements InvocationHandler {
 			if (result instanceof long[] counts) {
 				rows = affectedRows(counts);
 			}
-			return result instanceof ResultSet value ? wrapResultSet(value, id) : result;
+			if (kind == SqlEvent.Kind.EXECUTE && Boolean.FALSE.equals(result)) {
+				rows = updateCount();
+			}
+			return result instanceof ResultSet value ? wrapResultSet(value, id, true) : result;
 		}
 		catch (Throwable ex) {
+			if (ex instanceof BatchUpdateException batchFailure) {
+				rows = affectedRows(batchFailure.getLargeUpdateCounts());
+			}
 			failure = error(ex);
 			throw ex;
 		}
@@ -414,7 +463,10 @@ public final class JdbcProxy implements InvocationHandler {
 		}
 	}
 
-	private ResultSet wrapResultSet(ResultSet value, long statementId) {
+	private ResultSet wrapResultSet(ResultSet value, long statementId, boolean current) {
+		if (current) {
+			this.currentResultSet = value;
+		}
 		var existing = this.resultSets.get(value);
 		if (existing != null) {
 			return (ResultSet) existing.observedProxy;
@@ -431,6 +483,8 @@ public final class JdbcProxy implements InvocationHandler {
 
 	private void reportActiveResultSets() {
 		this.resultSets.values().forEach(JdbcProxy::reportResultSet);
+		this.resultSets.clear();
+		this.currentResultSet = null;
 	}
 
 	private void reportResultSet() {
@@ -451,8 +505,22 @@ public final class JdbcProxy implements InvocationHandler {
 		try {
 			return ((Statement) this.target).getQueryTimeout();
 		}
-		catch (Exception ex) {
+		catch (Exception | LinkageError ex) {
 			return 0;
+		}
+	}
+
+	private long updateCount() {
+		try {
+			return ((Statement) this.target).getLargeUpdateCount();
+		}
+		catch (Exception | LinkageError ex) {
+			try {
+				return ((Statement) this.target).getUpdateCount();
+			}
+			catch (Exception | LinkageError ignored) {
+				return -1;
+			}
 		}
 	}
 
@@ -472,68 +540,37 @@ public final class JdbcProxy implements InvocationHandler {
 	}
 
 	private String formatSql() {
-		if (this.rawSql == null || this.rawSql.isBlank()) {
-			return "";
-		}
-		var result = new StringBuilder(Math.min(MAX_TEXT_LENGTH, this.rawSql.length() + 64));
-		int parameter = 1;
-		for (int index = 0; index < this.rawSql.length() && result.length() < MAX_TEXT_LENGTH;) {
-			char current = this.rawSql.charAt(index);
-			if (current == '\'' || current == '"' || current == '`') {
-				index = copyQuoted(this.rawSql, index, current, result);
-			}
-			else if (current == '[') {
-				index = copyBracketIdentifier(this.rawSql, index, result);
-			}
-			else if (current == '-' && has(this.rawSql, index + 1, '-')) {
-				index = copyLineComment(this.rawSql, index, result);
-			}
-			else if (current == '/' && has(this.rawSql, index + 1, '*')) {
-				index = copyBlockComment(this.rawSql, index, result);
-			}
-			else {
-				if (current == '?') {
-					result.append(this.parameters.getOrDefault(parameter++, "?"));
-				}
-				else {
-					result.append(current);
-				}
-				index++;
-			}
-		}
-		return limit(result.toString());
+		return SqlText.renderParameters(this.rawSql, this.parameters, MAX_TEXT_LENGTH);
 	}
 
 	private String batchSql() {
-		var result = new StringBuilder();
-		for (var sql : this.batch) {
-			if (!result.isEmpty()) {
-				result.append(";\n");
-			}
-			if (result.length() + sql.length() > MAX_TEXT_LENGTH) {
-				result.append("…");
-				break;
-			}
-			result.append(sql);
-		}
-		return result.toString();
+		return String.join(";\n", this.batch) + (this.batchTruncated ? "\u2026" : "");
 	}
 
-	private static boolean isExecution(SqlEvent.Kind kind) {
-		return switch (kind) {
-			case QUERY, UPDATE, EXECUTE, BATCH -> true;
-			default -> false;
-		};
+	private void clearBatch() {
+		this.batch.clear();
+		this.batchCharacters = 0;
+		this.batchTruncated = false;
 	}
 
 	private static long affectedRows(int[] counts) {
-		var known = Arrays.stream(counts).filter(value -> value >= 0).toArray();
-		return known.length == 0 ? -1 : Arrays.stream(known).asLongStream().sum();
+		return affectedRows(Arrays.stream(counts).asLongStream().toArray());
 	}
 
 	private static long affectedRows(long[] counts) {
-		var known = Arrays.stream(counts).filter(value -> value >= 0).toArray();
-		return known.length == 0 ? -1 : Arrays.stream(known).sum();
+		if (counts == null) {
+			return -1;
+		}
+		long total = 0;
+		for (long count : counts) {
+			if (count == Statement.SUCCESS_NO_INFO) {
+				return -1;
+			}
+			if (count >= 0) {
+				total += count;
+			}
+		}
+		return total;
 	}
 
 	private static boolean isInputParameterSetter(String name, Object[] arguments) {
@@ -546,7 +583,7 @@ public final class JdbcProxy implements InvocationHandler {
 			return "NULL";
 		}
 		if (value instanceof Number || value instanceof Boolean) {
-			return value.toString();
+			return limit(safeToString(value));
 		}
 		if (value instanceof byte[] bytes) {
 			int length = Math.min(bytes.length, 64);
@@ -735,65 +772,6 @@ public final class JdbcProxy implements InvocationHandler {
 			return value;
 		}
 		return value.substring(0, MAX_TEXT_LENGTH) + "…";
-	}
-
-	private static int copyQuoted(String sql, int index, char quote, StringBuilder target) {
-		target.append(quote);
-		index++;
-		while (index < sql.length() && target.length() < MAX_TEXT_LENGTH) {
-			char current = sql.charAt(index++);
-			target.append(current);
-			if (current == '\\' && quote == '\'' && index < sql.length()) {
-				target.append(sql.charAt(index++));
-			}
-			else if (current == quote) {
-				if (has(sql, index, quote)) {
-					target.append(sql.charAt(index++));
-				}
-				else {
-					break;
-				}
-			}
-		}
-		return index;
-	}
-
-	private static int copyBracketIdentifier(String sql, int index, StringBuilder target) {
-		while (index < sql.length() && target.length() < MAX_TEXT_LENGTH) {
-			char current = sql.charAt(index++);
-			target.append(current);
-			if (current == ']' && !has(sql, index, ']')) {
-				break;
-			}
-		}
-		return index;
-	}
-
-	private static int copyLineComment(String sql, int index, StringBuilder target) {
-		while (index < sql.length() && target.length() < MAX_TEXT_LENGTH) {
-			char current = sql.charAt(index++);
-			target.append(current);
-			if (current == '\n' || current == '\r') {
-				break;
-			}
-		}
-		return index;
-	}
-
-	private static int copyBlockComment(String sql, int index, StringBuilder target) {
-		while (index < sql.length() && target.length() < MAX_TEXT_LENGTH) {
-			char current = sql.charAt(index++);
-			target.append(current);
-			if (current == '*' && has(sql, index, '/')) {
-				target.append(sql.charAt(index++));
-				break;
-			}
-		}
-		return index;
-	}
-
-	private static boolean has(String value, int index, char expected) {
-		return index >= 0 && index < value.length() && value.charAt(index) == expected;
 	}
 
 	private static final class ConnectionState {

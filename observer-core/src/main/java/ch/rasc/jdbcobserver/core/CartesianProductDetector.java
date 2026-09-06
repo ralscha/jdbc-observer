@@ -12,14 +12,14 @@ public final class CartesianProductDetector {
 
 	}
 
-	private static final Set<String> FROM_TERMINATORS = Set.of("fetch", "for", "group", "having", "intersect", "limit",
-			"offset", "order", "qualify", "returning", "union", "window");
+	private static final Set<String> FROM_TERMINATORS = Set.of("except", "fetch", "for", "group", "having", "intersect",
+			"limit", "offset", "order", "qualify", "returning", "union", "window");
 
 	private CartesianProductDetector() {
 	}
 
 	public static Finding detect(String sql) {
-		if (sql == null || sql.isBlank()) {
+		if (sql == null || sql.isBlank() || sql.stripTrailing().endsWith("\u2026")) {
 			return Finding.NONE;
 		}
 		var tokens = tokenize(SqlFingerprint.normalize(sql));
@@ -65,6 +65,10 @@ public final class CartesianProductDetector {
 			}
 			if (token.depth() != depth) {
 				continue;
+			}
+			if (token.type() == TokenType.SEMICOLON) {
+				end = index;
+				break;
 			}
 			if (token.isWord("where")) {
 				return false;
@@ -133,12 +137,12 @@ public final class CartesianProductDetector {
 				index = end;
 			}
 			else if (current == '"' || current == '`') {
-				int end = quotedIdentifierEnd(sql, index + 1, current);
+				int end = SqlText.quotedEnd(sql, index);
 				tokens.add(new Token(TokenType.IDENTIFIER, sql.substring(index, end), depth));
 				index = end;
 			}
 			else if (current == '[') {
-				int end = bracketIdentifierEnd(sql, index + 1);
+				int end = SqlText.quotedEnd(sql, index);
 				tokens.add(new Token(TokenType.IDENTIFIER, sql.substring(index, end), depth));
 				index = end;
 			}
@@ -161,34 +165,6 @@ public final class CartesianProductDetector {
 			}
 		}
 		return tokens;
-	}
-
-	private static int quotedIdentifierEnd(String sql, int index, char quote) {
-		while (index < sql.length()) {
-			if (sql.charAt(index++) == quote) {
-				if (index < sql.length() && sql.charAt(index) == quote) {
-					index++;
-				}
-				else {
-					break;
-				}
-			}
-		}
-		return index;
-	}
-
-	private static int bracketIdentifierEnd(String sql, int index) {
-		while (index < sql.length()) {
-			if (sql.charAt(index++) == ']') {
-				if (index < sql.length() && sql.charAt(index) == ']') {
-					index++;
-				}
-				else {
-					break;
-				}
-			}
-		}
-		return index;
 	}
 
 	private static boolean isWordPart(char value) {

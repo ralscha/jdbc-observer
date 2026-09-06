@@ -17,9 +17,11 @@ public final class ReverseThrottleSmokeApplication {
 	}
 
 	public static void main(String[] args) throws Exception {
+		int port = args.length == 0 ? 4561 : Integer.parseInt(args[0]);
 		try (var server = new ServerSocket()) {
 			server.setReuseAddress(true);
-			server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 4561));
+			server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), port));
+			server.setSoTimeout(10_000);
 			try (var socket = server.accept();
 					var input = new DataInputStream(socket.getInputStream());
 					var output = new DataOutputStream(socket.getOutputStream())) {

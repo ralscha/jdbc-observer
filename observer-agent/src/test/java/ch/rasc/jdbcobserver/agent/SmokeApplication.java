@@ -13,7 +13,8 @@ import org.h2.jdbcx.JdbcDataSource;
 public final class SmokeApplication {
 
 	public static void main(String[] args) throws Exception {
-		try (var socket = new Socket(InetAddress.getLoopbackAddress(), 4561);
+		int port = args.length == 0 ? 4561 : Integer.parseInt(args[0]);
+		try (var socket = new Socket(InetAddress.getLoopbackAddress(), port);
 				var input = new DataInputStream(socket.getInputStream());
 				var output = new DataOutputStream(socket.getOutputStream())) {
 			socket.setSoTimeout(5_000);

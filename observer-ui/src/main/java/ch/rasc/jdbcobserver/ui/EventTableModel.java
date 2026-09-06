@@ -4,8 +4,10 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import javax.swing.table.AbstractTableModel;
 
@@ -28,6 +30,8 @@ final class EventTableModel extends AbstractTableModel {
 	private final Map<Long, Finding> cartesianProducts = new HashMap<>();
 
 	private final Map<Long, BroadDmlDetector.Finding> broadDml = new HashMap<>();
+
+	private final Set<Long> updateCountEvents = new HashSet<>();
 
 	private double totalDurationMillis;
 
@@ -61,6 +65,10 @@ final class EventTableModel extends AbstractTableModel {
 			this.events.add(event);
 			this.repetitionDetector.add(event);
 			if (event.kind().isSqlStatement()) {
+				if (event.kind() == SqlEvent.Kind.UPDATE || event.kind() == SqlEvent.Kind.BATCH
+						|| event.kind() == SqlEvent.Kind.EXECUTE && event.rows() >= 0) {
+					this.updateCountEvents.add(event.id());
+				}
 				var cartesianProduct = CartesianProductDetector.detect(sql(event));
 				if (cartesianProduct != Finding.NONE) {
 					this.cartesianProducts.put(event.id(), cartesianProduct);
@@ -72,12 +80,17 @@ final class EventTableModel extends AbstractTableModel {
 			}
 			addMetrics(event);
 		}
-		while (this.events.size() > this.limit) {
-			var removed = this.events.removeFirst();
+		int excess = this.events.size() - this.limit;
+		for (int index = 0; index < excess; index++) {
+			var removed = this.events.get(index);
 			this.repetitionDetector.remove(removed);
 			this.cartesianProducts.remove(removed.id());
 			this.broadDml.remove(removed.id());
+			this.updateCountEvents.remove(removed.id());
 			removeMetrics(removed);
+		}
+		if (excess > 0) {
+			this.events.subList(0, excess).clear();
 		}
 		fireTableDataChanged();
 	}
@@ -87,6 +100,7 @@ final class EventTableModel extends AbstractTableModel {
 		this.repetitionDetector.clear();
 		this.cartesianProducts.clear();
 		this.broadDml.clear();
+		this.updateCountEvents.clear();
 		this.totalDurationMillis = 0;
 		this.failedCount = 0;
 		this.rowCount = 0;
@@ -242,7 +256,7 @@ final class EventTableModel extends AbstractTableModel {
 		if (!statementEvent.kind().isSqlStatement()) {
 			return false;
 		}
-		var merged = merge(statementEvent, resultSetEvent);
+		var merged = merge(statementEvent, resultSetEvent, this.updateCountEvents.contains(statementEvent.id()));
 		this.events.set(statementIndex, merged);
 		removeMetrics(statementEvent);
 		addMetrics(merged);
@@ -258,14 +272,15 @@ final class EventTableModel extends AbstractTableModel {
 		return -1;
 	}
 
-	private static SqlEvent merge(SqlEvent statementEvent, SqlEvent resultSetEvent) {
+	private static SqlEvent merge(SqlEvent statementEvent, SqlEvent resultSetEvent, boolean preserveUpdateCount) {
 		var success = statementEvent.success() && resultSetEvent.success();
 		var error = statementEvent.error();
 		if (!resultSetEvent.error().isBlank()) {
 			error = resultSetEvent.error();
 		}
-		var rows = resultSetEvent.rows() >= 0 ? resultSetEvent.rows() : statementEvent.rows();
-		var fetchNanos = Math.max(statementEvent.fetchNanos(), resultSetEvent.fetchNanos());
+		var rows = !preserveUpdateCount && resultSetEvent.rows() >= 0
+				? Math.max(0, statementEvent.rows()) + resultSetEvent.rows() : statementEvent.rows();
+		var fetchNanos = statementEvent.fetchNanos() + resultSetEvent.fetchNanos();
 		var resultSetUseNanos = Math.max(statementEvent.resultSetUseNanos(), resultSetEvent.resultSetUseNanos());
 		var stackTrace = statementEvent.stackTrace().isBlank() ? resultSetEvent.stackTrace()
 				: statementEvent.stackTrace();

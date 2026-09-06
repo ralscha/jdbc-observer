@@ -47,6 +47,15 @@ class CartesianProductDetectorTest {
 	}
 
 	@Test
+	void doesNotLetLaterStatementsOrSetOperationsHideACommaJoin() {
+		assertEquals(UNCONSTRAINED_COMMA_JOIN,
+				CartesianProductDetector.detect("select * from a, b; select * from c where id = 1"));
+		assertEquals(UNCONSTRAINED_COMMA_JOIN,
+				CartesianProductDetector.detect("select a.id from a, b except select id from c where id = 1"));
+		assertEquals(NONE, CartesianProductDetector.detect("select * from a, b\u2026"));
+	}
+
+	@Test
 	void acceptsNormalQualifiedJoinsAndEmptyInput() {
 		assertEquals(NONE,
 				CartesianProductDetector.detect("select * from customer c join country x on c.country_id = x.id"));

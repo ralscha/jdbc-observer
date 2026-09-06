@@ -1,15 +1,20 @@
 package ch.rasc.jdbcobserver.agent;
 
 import java.sql.Connection;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import java.util.Properties;
 import java.util.StringJoiner;
+import java.util.regex.Pattern;
 
 public final class ConnectionInterceptor {
 
 	private static final ThreadLocal<Integer> DEPTH = ThreadLocal.withInitial(() -> 0);
 
 	private static final ThreadLocal<Integer> SUPPRESSION = ThreadLocal.withInitial(() -> 0);
+
+	private static final Pattern URL_PROPERTY = Pattern.compile("(?<![\\w.%+-])([\\w.%+-]+)=");
 
 	private ConnectionInterceptor() {
 	}
@@ -94,7 +99,46 @@ public final class ConnectionInterceptor {
 		if (url == null || url.isBlank()) {
 			return "";
 		}
-		return url.replaceAll("(?i)(password|passwd|pwd|secret|token)=([^;&]*)", "$1=***");
+		var matcher = URL_PROPERTY.matcher(url);
+		var result = new StringBuilder();
+		int copied = 0;
+		while (matcher.find()) {
+			String key = matcher.group(1);
+			try {
+				key = URLDecoder.decode(key, StandardCharsets.UTF_8);
+			}
+			catch (IllegalArgumentException ignored) {
+			}
+			int end = propertyValueEnd(url, matcher.end());
+			if (isSecret(key)) {
+				result.append(url, copied, matcher.end()).append("***");
+			}
+			else {
+				result.append(url, copied, end);
+			}
+			copied = end;
+			matcher.region(end, url.length());
+		}
+		return result.append(url, copied, url.length()).toString();
+	}
+
+	private static int propertyValueEnd(String url, int index) {
+		boolean braced = index < url.length() && url.charAt(index) == '{';
+		while (index < url.length()) {
+			char current = url.charAt(index);
+			if (braced && current == '}') {
+				if (index + 1 < url.length() && url.charAt(index + 1) == '}') {
+					index += 2;
+					continue;
+				}
+				return index + 1;
+			}
+			if (!braced && (current == ';' || current == '&' || current == ')')) {
+				return index;
+			}
+			index++;
+		}
+		return index;
 	}
 
 	private static boolean isSecret(String name) {
