@@ -44,6 +44,8 @@ class BroadDmlDetectorTest {
 		assertEquals(UPDATE_WITHOUT_WHERE,
 				BroadDmlDetector.detect("update customer set note = 'where id = 1' /* where active */"));
 		assertEquals(DELETE_WITHOUT_WHERE, BroadDmlDetector.detect("delete from \"where\""));
+		assertEquals(UPDATE_WITHOUT_WHERE,
+				BroadDmlDetector.detect("update customer set note = q'[Bob's where id = 1]'"));
 	}
 
 	@Test

@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import ch.rasc.jdbcobserver.core.ControlCodec;
 import java.sql.DriverManager;
+import java.util.List;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.Test;
 
@@ -48,6 +49,51 @@ class ExplainServiceTest {
 		var missing = ExplainService.explain(new ControlCodec.ExplainRequest(9, "c-missing", "select 1"));
 		assertFalse(missing.success());
 		assertTrue(missing.error().contains("no longer available"));
+	}
+
+	@Test
+	void rejectsAnalyzeOptionsWithoutExecutingTheStatement() throws Exception {
+		try (var connection = DriverManager.getConnection("jdbc:h2:mem:explain_analyze")) {
+			try (var statement = connection.createStatement()) {
+				statement.execute("create table protected_book (id int primary key)");
+				statement.execute("insert into protected_book values (1)");
+			}
+			ExplainService.register("c-analyze", connection, null);
+			try {
+				for (var prefix : List.of("ANALYZE ", "analyze ", "-- comment\nANALYZE ",
+						"/* outer /* nested */ comment */ ANALYZE ", "(ANALYZE true) ", "FORMAT=JSON ANALYZE ")) {
+					var response = ExplainService.explain(
+							new ControlCodec.ExplainRequest(20, "c-analyze", prefix + "delete from protected_book"));
+					assertFalse(response.success(), prefix);
+					assertTrue(response.error().contains("without EXPLAIN options"), response.error());
+				}
+				try (var statement = connection.createStatement();
+						var result = statement.executeQuery("select count(*) from protected_book")) {
+					assertTrue(result.next());
+					assertEquals(1, result.getInt(1));
+				}
+			}
+			finally {
+				ExplainService.unregister("c-analyze");
+			}
+		}
+	}
+
+	@Test
+	void explainsStatementsWithLeadingCommentsAndCtes() throws Exception {
+		try (var connection = DriverManager.getConnection("jdbc:h2:mem:explain_comments")) {
+			ExplainService.register("c-comments", connection, null);
+			try {
+				for (var sql : List.of("-- leading comment\nselect 1", "/* outer /* nested */ comment */ select 1",
+						"/*! ANALYZE */ select 1", "with example as (select 1 as id) select * from example")) {
+					var response = ExplainService.explain(new ControlCodec.ExplainRequest(21, "c-comments", sql));
+					assertTrue(response.success(), response.error());
+				}
+			}
+			finally {
+				ExplainService.unregister("c-comments");
+			}
+		}
 	}
 
 	@Test

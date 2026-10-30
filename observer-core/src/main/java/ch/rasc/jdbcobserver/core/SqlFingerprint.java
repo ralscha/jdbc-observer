@@ -10,6 +10,7 @@ public final class SqlFingerprint {
 			return "";
 		}
 		var result = new StringBuilder(sql.length());
+		int arrayDepth = 0;
 		for (int index = 0; index < sql.length();) {
 			char current = sql.charAt(index);
 			if (Character.isWhitespace(current)) {
@@ -23,13 +24,17 @@ public final class SqlFingerprint {
 				index = end;
 				continue;
 			}
-			end = SqlText.quotedEnd(sql, index);
+			boolean arrayBracket = current == '[' && (arrayDepth > 0 || SqlText.followsArrayConstructor(sql, index));
+			if (arrayBracket) {
+				arrayDepth++;
+			}
+			end = SqlText.quotedEnd(sql, index, !arrayBracket);
 			if (end > index) {
-				if (current == '\'' || current == '$') {
-					result.append('?');
+				if (current == '"' || current == '`' || current == '[') {
+					result.append(sql, index, end);
 				}
 				else {
-					result.append(sql, index, end);
+					result.append('?');
 				}
 				index = end;
 				continue;
@@ -38,6 +43,9 @@ public final class SqlFingerprint {
 				result.append('?');
 				index = skipNumber(sql, index);
 				continue;
+			}
+			if (current == ']' && arrayDepth > 0) {
+				arrayDepth--;
 			}
 			result.append(Character.toLowerCase(current));
 			index++;

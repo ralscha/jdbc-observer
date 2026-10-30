@@ -27,7 +27,6 @@ import java.sql.Savepoint;
 import java.sql.Statement;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -43,7 +42,7 @@ public final class JdbcProxy implements InvocationHandler {
 
 	private static final int MAX_BATCH_ENTRIES = 10_000;
 
-	private static final StackWalker STACK_WALKER = StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE);
+	private static final StackWalker STACK_WALKER = StackWalker.getInstance();
 
 	private static final AtomicLong CONNECTION_IDS = new AtomicLong();
 
@@ -554,7 +553,19 @@ public final class JdbcProxy implements InvocationHandler {
 	}
 
 	private static long affectedRows(int[] counts) {
-		return affectedRows(Arrays.stream(counts).asLongStream().toArray());
+		if (counts == null) {
+			return -1;
+		}
+		long total = 0;
+		for (int count : counts) {
+			if (count == Statement.SUCCESS_NO_INFO) {
+				return -1;
+			}
+			if (count >= 0) {
+				total += count;
+			}
+		}
+		return total;
 	}
 
 	private static long affectedRows(long[] counts) {
@@ -606,7 +617,8 @@ public final class JdbcProxy implements InvocationHandler {
 
 	private static String safeToString(Object value) {
 		try {
-			return String.valueOf(value);
+			String result = String.valueOf(value);
+			return result == null ? "<" + value.getClass().getName() + ">" : result;
 		}
 		catch (Exception | LinkageError ex) {
 			return "<" + value.getClass().getName() + ">";
@@ -645,10 +657,11 @@ public final class JdbcProxy implements InvocationHandler {
 		String limitedSql = limit(sql);
 		var fingerprint = SqlFingerprint
 			.normalize(limitedRawSql == null || limitedRawSql.isBlank() ? limitedSql : limitedRawSql);
-		var frames = applicationFrames();
-		var callSite = frames.isEmpty() ? "" : frames.getFirst().toString();
 		long observedDuration = Math.max(duration, Math.max(fetch, use));
-		var stackTrace = AgentRuntime.captureStackTrace(observedDuration, success) ? frames.stream()
+		boolean captureStackTrace = AgentRuntime.captureStackTrace(observedDuration, success);
+		var frames = applicationFrames(captureStackTrace ? 32 : 1);
+		var callSite = frames.isEmpty() ? "" : frames.getFirst().toString();
+		var stackTrace = captureStackTrace ? frames.stream()
 			.map(StackWalker.StackFrame::toString)
 			.collect(java.util.stream.Collectors.joining("\n")) : "";
 		return new SqlEvent(id, parentId, connection.transactionId(), Instant.now(), Thread.currentThread().getName(),
@@ -657,7 +670,7 @@ public final class JdbcProxy implements InvocationHandler {
 				connection.properties(), fingerprint, callSite, stackTrace);
 	}
 
-	private static List<StackWalker.StackFrame> applicationFrames() {
+	private static List<StackWalker.StackFrame> applicationFrames(int limit) {
 		return STACK_WALKER.walk(stream -> stream.filter(frame -> {
 			var name = frame.getClassName();
 			return !isAgentFrame(name) && !name.startsWith("java.") && !name.startsWith("jdk.")
@@ -665,7 +678,7 @@ public final class JdbcProxy implements InvocationHandler {
 					&& !name.startsWith("org.springframework.") && !name.startsWith("org.postgresql.")
 					&& !name.startsWith("org.h2.") && !name.startsWith("com.zaxxer.hikari.")
 					&& !name.startsWith("jakarta.persistence.");
-		}).limit(32).toList());
+		}).limit(limit).toList());
 	}
 
 	private static boolean isAgentFrame(String name) {

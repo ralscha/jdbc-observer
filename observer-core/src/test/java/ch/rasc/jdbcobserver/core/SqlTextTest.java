@@ -22,6 +22,13 @@ class SqlTextTest {
 	}
 
 	@Test
+	void preservesOracleAlternativeQuotedLiterals() {
+		String sql = "select q'[Bob's ?]', Q'{it's ?}', q'(it's ?)', q'<it's ?>', q'!it's ?!', nq'[it's ?]', ? from dual";
+		assertEquals(sql.replace(", ? from dual", ", 42 from dual"),
+				SqlText.renderParameters(sql, Map.of(1, "42"), 1_000));
+	}
+
+	@Test
 	void doesNotTreatDollarSignsInIdentifiersOrPositionalParametersAsQuotes() {
 		assertEquals("select name$tag$, $1, 42",
 				SqlText.renderParameters("select name$tag$, $1, ?", Map.of(1, "42"), 100));

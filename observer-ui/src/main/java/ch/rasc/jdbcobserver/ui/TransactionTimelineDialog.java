@@ -247,8 +247,8 @@ final class TransactionTimelineDialog extends JDialog {
 
 	}
 
-	private record TransactionSummary(long id, String connection, Instant started, Instant lastActivity,
-			long durationMillis, long idleMillis, boolean active, String status, List<SqlEvent> events) {
+	record TransactionSummary(long id, String connection, Instant started, Instant lastActivity, long durationMillis,
+			long idleMillis, boolean active, String status, List<SqlEvent> events) {
 
 		static TransactionSummary create(long id, List<SqlEvent> events, Instant now) {
 			var first = events.stream()
@@ -256,12 +256,13 @@ final class TransactionTimelineDialog extends JDialog {
 				.findFirst()
 				.orElseThrow();
 			var last = events.getLast();
-			boolean active = !terminal(last);
-			var ended = active ? now : last.timestamp();
+			var terminal = events.stream().filter(TransactionSummary::terminal).findFirst().orElse(null);
+			boolean active = terminal == null;
+			var ended = active ? now : terminal.timestamp();
 			return new TransactionSummary(id, first.connection(), first.timestamp(), last.timestamp(),
-					Duration.between(first.timestamp(), ended).toMillis(),
-					active ? Duration.between(last.timestamp(), now).toMillis() : 0, active,
-					active ? "ACTIVE" : last.kind().toString(), List.copyOf(events));
+					Math.max(0, Duration.between(first.timestamp(), ended).toMillis()),
+					active ? Math.max(0, Duration.between(last.timestamp(), now).toMillis()) : 0, active,
+					active ? "ACTIVE" : terminal.kind().toString(), List.copyOf(events));
 		}
 
 		private static boolean terminal(SqlEvent event) {

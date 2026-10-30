@@ -27,8 +27,7 @@ public final class SqlText {
 		while (index < sql.length() && result.length() < maxLength) {
 			int end = commentEnd(sql, index);
 			if (end == index) {
-				boolean arrayBracket = sql.charAt(index) == '['
-						&& (arrayDepth > 0 || followsArrayExpression(sql, index));
+				boolean arrayBracket = isArrayOpening(sql, index, arrayDepth);
 				if (arrayBracket) {
 					arrayDepth++;
 				}
@@ -143,8 +142,11 @@ public final class SqlText {
 		return quotedEnd(sql, index, true);
 	}
 
-	private static int quotedEnd(String sql, int index, boolean bracketIdentifier) {
+	static int quotedEnd(String sql, int index, boolean bracketIdentifier) {
 		char quote = sql.charAt(index);
+		if (quote == 'q' || quote == 'Q' || quote == 'n' || quote == 'N') {
+			return alternativeQuoteEnd(sql, index);
+		}
 		if (quote == '$') {
 			return dollarQuoteEnd(sql, index);
 		}
@@ -170,11 +172,50 @@ public final class SqlText {
 		return index;
 	}
 
+	private static boolean isArrayOpening(String sql, int index, int arrayDepth) {
+		return sql.charAt(index) == '[' && (arrayDepth > 0 || followsArrayExpression(sql, index));
+	}
+
+	private static int alternativeQuoteEnd(String sql, int start) {
+		if (start > 0 && isIdentifier(sql.charAt(start - 1))) {
+			return start;
+		}
+		int prefix = start;
+		if (sql.charAt(prefix) == 'n' || sql.charAt(prefix) == 'N') {
+			prefix++;
+		}
+		if (!(has(sql, prefix, 'q') || has(sql, prefix, 'Q')) || !has(sql, prefix + 1, '\'')
+				|| prefix + 2 >= sql.length()) {
+			return start;
+		}
+		char opening = sql.charAt(prefix + 2);
+		if (Character.isWhitespace(opening)) {
+			return start;
+		}
+		char closing = switch (opening) {
+			case '[' -> ']';
+			case '{' -> '}';
+			case '(' -> ')';
+			case '<' -> '>';
+			default -> opening;
+		};
+		for (int index = prefix + 3; index + 1 < sql.length(); index++) {
+			if (sql.charAt(index) == closing && sql.charAt(index + 1) == '\'') {
+				return index + 2;
+			}
+		}
+		return sql.length();
+	}
+
 	private static boolean followsArrayExpression(String sql, int index) {
 		if (index > 0 && (isIdentifier(sql.charAt(index - 1)) || sql.charAt(index - 1) == ']'
 				|| sql.charAt(index - 1) == ')')) {
 			return true;
 		}
+		return followsArrayConstructor(sql, index);
+	}
+
+	static boolean followsArrayConstructor(String sql, int index) {
 		int end = index;
 		while (end > 0 && Character.isWhitespace(sql.charAt(end - 1))) {
 			end--;

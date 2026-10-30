@@ -16,6 +16,9 @@ public final class ConnectionInterceptor {
 
 	private static final Pattern URL_PROPERTY = Pattern.compile("(?<![\\w.%+-])([\\w.%+-]+)=");
 
+	private static final Pattern ORACLE_CREDENTIALS = Pattern.compile(
+			"(?i)^(jdbc:oracle:(?:thin|oci|oci8|kprb):)(\"(?:[^\"]++|\"\")*+\"|[^/@]*)(/(?:\"(?:[^\"]++|\"\")*+\"|[^@]*))(@|$)");
+
 	private ConnectionInterceptor() {
 	}
 
@@ -99,6 +102,7 @@ public final class ConnectionInterceptor {
 		if (url == null || url.isBlank()) {
 			return "";
 		}
+		url = ORACLE_CREDENTIALS.matcher(url).replaceFirst("$1$2/***$4");
 		var matcher = URL_PROPERTY.matcher(url);
 		var result = new StringBuilder();
 		int copied = 0;
@@ -109,8 +113,11 @@ public final class ConnectionInterceptor {
 			}
 			catch (IllegalArgumentException ignored) {
 			}
-			int end = propertyValueEnd(url, matcher.end());
-			if (isSecret(key)) {
+			boolean secret = isSecret(key);
+			// Inspect keys inside Oracle DESCRIPTION and MySQL address property groups.
+			int end = !secret && url.startsWith("(", matcher.end()) ? matcher.end()
+					: propertyValueEnd(url, matcher.end());
+			if (secret) {
 				result.append(url, copied, matcher.end()).append("***");
 			}
 			else {

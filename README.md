@@ -45,11 +45,12 @@ The UI combines rows and fetch time from multiple query result sets and preserve
 generated keys are read.
 
 Parameter rendering preserves quoted text and nested comments, including PostgreSQL dollar-quoted strings,
-escaped `??` operators, and array parameters. Truncated SQL is marked with an ellipsis.
+Oracle `q'[...]'` literals, escaped `??` operators, and array parameters. SQL fingerprints normalize values in
+PostgreSQL `ARRAY[...]` constructors while preserving quoted identifiers. Truncated SQL is marked with an ellipsis.
 
-The UI provides filtering/highlighting, minimum-duration filtering, a SQL-statements-only view, correctly typed sorting, pause/resume, per-event details, on-demand execution plans, grouped cumulative SQL analysis, connection metadata, aggregate metrics, bounded batch ingestion, bounded history, light/dark styling, complete asynchronous CSV export, and runtime SQL throttling. Pause and Clear stay available in the command bar; on narrower windows, the minimum-duration control collapses into the **Filters** popup. SQL-only filtering, highlighting, and auto-scroll are available from the **View** menu. Set the history limit with `-DmaxLoggedStatements=50000` (the default is 20,000). Pausing intentionally discards incoming events until capture is resumed.
+The UI provides filtering/highlighting, minimum-duration filtering, a SQL-statements-only view, correctly typed sorting, pause/resume, per-event details, on-demand execution plans, grouped cumulative SQL analysis, connection metadata, aggregate metrics, bounded batch ingestion, bounded history, light/dark styling, complete asynchronous CSV export, and runtime SQL throttling. Pause and Clear stay available in the command bar; on narrower windows, the minimum-duration control collapses into the **Filters** popup. SQL-only filtering, **Failures only**, highlighting, and auto-scroll are available from the **View** menu. Filters combine, so disable **SQL statements only** to include failed transaction and connection operations. The selected event stays selected while new telemetry arrives, until it is filtered out or evicted. Set the history limit with `-DmaxLoggedStatements=50000` (the default is 20,000). Pausing intentionally discards incoming events until capture is resumed.
 
-Agent server mode binds only to loopback and accepts one active UI at a time; a newer UI connection replaces the previous one. UI listener mode intentionally opens the configured local port and should be exposed only on trusted networks. The protocol is unencrypted and unauthenticated. SQL and bound values can contain sensitive application data, so do not send telemetry over an untrusted network. Connection property and URL keys commonly used for passwords, secrets, credentials, and tokens are redacted.
+Agent server mode binds only to loopback and accepts one active UI at a time; a newer UI connection replaces the previous one. UI listener mode intentionally opens the configured local port and should be exposed only on trusted networks. The protocol is unencrypted and unauthenticated. SQL and bound values can contain sensitive application data, so do not send telemetry over an untrusted network. Connection property and URL keys commonly used for passwords, secrets, credentials, and tokens are redacted, including nested address properties and passwords embedded in Oracle JDBC URLs.
 
 Each agent process has a unique session identity. The UI retains events across reconnects to the same process and starts a fresh history when a different agent connects, preventing event and transaction ID collisions.
 
@@ -115,7 +116,7 @@ Use **Settings > Throttler** to add an artificial delay before each observed que
 
 ### Execution plans
 
-Select a query, update, or generic execute event and choose **Analyze > Explain selected SQL** (or press `Ctrl+E`) to request its execution plan. The agent uses the matching live JDBC connection when it is still open, or borrows a replacement from the originating data source after a pooled connection has been returned. It runs plain `EXPLAIN`, never `EXPLAIN ANALYZE`, so the selected statement is not executed. For safety, EXPLAIN requests accept one statement, time out after 10 seconds when the driver supports query timeouts, and cap returned output.
+Select a query, update, or generic execute event and choose **Analyze > Explain selected SQL** (or press `Ctrl+E`) to request its execution plan. The agent uses the matching live JDBC connection when it is still open, or borrows a replacement from the originating data source after a pooled connection has been returned. It runs plain `EXPLAIN`, never `EXPLAIN ANALYZE`, so the selected statement is not executed. Requests must start with a query or DML keyword after leading comments; execution options such as `ANALYZE` are rejected. For safety, EXPLAIN requests accept one statement, time out after 10 seconds when the driver supports query timeouts, and cap returned output.
 
 Replacement connections are borrowed only through a `DataSource`. Events captured directly from a
 `PooledConnection` can be explained while their logical connection is open; once it closes, run the SQL again
@@ -132,8 +133,6 @@ java -DjdbcObserver.longTransactionMillis=5000 \
      -DjdbcObserver.idleTransactionMillis=2000 \
      -jar observer-ui.jar
 ```
-
-The historical source remains under `old/` for reference and is not part of the new Maven reactor.
 
 ## Development tasks
 

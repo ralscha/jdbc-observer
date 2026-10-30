@@ -23,6 +23,12 @@ final class EventTableModel extends AbstractTableModel {
 
 	private final List<SqlEvent> events = new ArrayList<>();
 
+	// Absolute positions keep lookups constant-time without reindexing retained rows
+	// whenever the oldest events are evicted.
+	private final Map<Long, Long> eventPositions = new HashMap<>();
+
+	private long firstPosition;
+
 	private final int limit;
 
 	private final RepetitionDetector repetitionDetector = new RepetitionDetector();
@@ -62,6 +68,7 @@ final class EventTableModel extends AbstractTableModel {
 			if (event.kind() == SqlEvent.Kind.RESULT_SET && event.parentId() > 0 && mergeResultSet(event)) {
 				continue;
 			}
+			this.eventPositions.put(event.id(), this.firstPosition + this.events.size());
 			this.events.add(event);
 			this.repetitionDetector.add(event);
 			if (event.kind().isSqlStatement()) {
@@ -83,6 +90,7 @@ final class EventTableModel extends AbstractTableModel {
 		int excess = this.events.size() - this.limit;
 		for (int index = 0; index < excess; index++) {
 			var removed = this.events.get(index);
+			this.eventPositions.remove(removed.id());
 			this.repetitionDetector.remove(removed);
 			this.cartesianProducts.remove(removed.id());
 			this.broadDml.remove(removed.id());
@@ -91,12 +99,15 @@ final class EventTableModel extends AbstractTableModel {
 		}
 		if (excess > 0) {
 			this.events.subList(0, excess).clear();
+			this.firstPosition += excess;
 		}
 		fireTableDataChanged();
 	}
 
 	void clear() {
 		this.events.clear();
+		this.eventPositions.clear();
+		this.firstPosition = 0;
 		this.repetitionDetector.clear();
 		this.cartesianProducts.clear();
 		this.broadDml.clear();
@@ -263,13 +274,9 @@ final class EventTableModel extends AbstractTableModel {
 		return true;
 	}
 
-	private int findById(long eventId) {
-		for (int index = this.events.size() - 1; index >= 0; index--) {
-			if (this.events.get(index).id() == eventId) {
-				return index;
-			}
-		}
-		return -1;
+	int findById(long eventId) {
+		var position = this.eventPositions.get(eventId);
+		return position == null ? -1 : Math.toIntExact(position - this.firstPosition);
 	}
 
 	private static SqlEvent merge(SqlEvent statementEvent, SqlEvent resultSetEvent, boolean preserveUpdateCount) {

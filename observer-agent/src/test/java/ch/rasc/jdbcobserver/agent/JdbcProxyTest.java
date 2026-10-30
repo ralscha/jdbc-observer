@@ -168,6 +168,29 @@ class JdbcProxyTest {
 	}
 
 	@Test
+	void aNullToStringResultCannotBreakASuccessfulParameterSetter() throws Exception {
+		var setterCalls = new AtomicInteger();
+		var raw = proxy(PreparedStatement.class, (proxy, method, arguments) -> {
+			if (method.getName().equals("setObject")) {
+				setterCalls.incrementAndGet();
+			}
+			return defaultValue(method.getReturnType());
+		});
+		var statement = JdbcProxy.wrapConnection(fakeConnection(raw, false)).prepareStatement("select ?");
+		var value = new Object() {
+			@Override
+			public String toString() {
+				return null;
+			}
+		};
+
+		statement.setObject(1, value);
+
+		assertEquals(1, setterCalls.get());
+		assertTrue(invokeFormatSql(handler(statement)).contains(value.getClass().getName()));
+	}
+
+	@Test
 	void failedCommitKeepsTheTransactionActive() throws Exception {
 		var rawStatement = proxy(Statement.class, (proxy, method, arguments) -> {
 			if (method.getName().equals("execute")) {

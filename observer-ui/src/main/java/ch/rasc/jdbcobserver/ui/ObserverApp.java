@@ -140,6 +140,8 @@ public final class ObserverApp extends JFrame {
 
 	private final JCheckBoxMenuItem sqlStatementsOnly = new JCheckBoxMenuItem("SQL statements only", true);
 
+	private final JCheckBoxMenuItem failuresOnly = new JCheckBoxMenuItem("Failures only");
+
 	private final JCheckBoxMenuItem highlightMatches = new JCheckBoxMenuItem("Highlight matches", true);
 
 	private final JCheckBoxMenuItem autoScroll = new JCheckBoxMenuItem("Auto-scroll", true);
@@ -217,6 +219,7 @@ public final class ObserverApp extends JFrame {
 			updateFiltersButton();
 		});
 		this.sqlStatementsOnly.addActionListener(event -> applyFilter());
+		this.failuresOnly.addActionListener(event -> applyFilter());
 		this.highlightMatches.addActionListener(event -> this.table.repaint());
 		this.autoScroll.setToolTipText("Keep the latest event visible as new events arrive");
 		this.autoScroll.addActionListener(event -> {
@@ -227,6 +230,7 @@ public final class ObserverApp extends JFrame {
 		setJMenuBar(createMenuBar());
 		this.commandBar = createCommandBar();
 		this.table.setRowSorter(this.sorter);
+		applyFilter();
 		this.table.setRowHeight(28);
 		this.table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
 		this.table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
@@ -328,6 +332,7 @@ public final class ObserverApp extends JFrame {
 		view.add(resetZoom);
 		view.addSeparator();
 		view.add(this.sqlStatementsOnly);
+		view.add(this.failuresOnly);
 		view.add(this.highlightMatches);
 		view.add(this.autoScroll);
 		menuBar.add(view);
@@ -684,11 +689,30 @@ public final class ObserverApp extends JFrame {
 			}
 			additions.add(incomingEvent.event());
 		}
-		this.model.addAll(additions);
+		appendEvents(this.model, this.table, additions);
 		if (!additions.isEmpty()) {
 			scrollToLatestEvent();
 			updateMetrics();
 			updateExplainState();
+		}
+	}
+
+	static void appendEvents(EventTableModel model, JTable table, List<SqlEvent> additions) {
+		if (additions.isEmpty()) {
+			return;
+		}
+		int selectedRow = table.getSelectedRow();
+		Long selectedId = selectedRow < 0 ? null : model.get(table.convertRowIndexToModel(selectedRow)).id();
+		model.addAll(additions);
+		if (selectedId != null) {
+			int modelRow = model.findById(selectedId);
+			int viewRow = modelRow < 0 ? -1 : table.convertRowIndexToView(modelRow);
+			if (viewRow >= 0) {
+				table.setRowSelectionInterval(viewRow, viewRow);
+			}
+			else {
+				table.clearSelection();
+			}
 		}
 	}
 
@@ -765,21 +789,25 @@ public final class ObserverApp extends JFrame {
 	private void applyFilter() {
 		var text = this.filter.getText().toLowerCase(Locale.ROOT);
 		var minimum = ((Number) this.minimumDuration.getValue()).doubleValue();
+		boolean statementsOnly = this.sqlStatementsOnly.isSelected();
+		boolean failedOnly = this.failuresOnly.isSelected();
 		this.sorter.setRowFilter(new RowFilter<>() {
 			@Override
 			public boolean include(Entry<? extends EventTableModel, ? extends Integer> entry) {
-				var event = model.get(entry.getIdentifier());
-				if (sqlStatementsOnly.isSelected() && !event.kind().isSqlStatement()) {
-					return false;
-				}
-				double observedDuration = Math.max(event.durationMillis(),
-						Math.max(event.fetchMillis(), event.resultSetUseMillis()));
-				if (observedDuration < minimum) {
-					return false;
-				}
-				return text.isBlank() || searchable(event).contains(text);
+				return matchesFilter(entry.getModel().get(entry.getIdentifier()), text, minimum, statementsOnly,
+						failedOnly);
 			}
 		});
+	}
+
+	static boolean matchesFilter(SqlEvent event, String text, double minimum, boolean statementsOnly,
+			boolean failuresOnly) {
+		if (statementsOnly && !event.kind().isSqlStatement() || failuresOnly && event.success()) {
+			return false;
+		}
+		double observedDuration = Math.max(event.durationMillis(),
+				Math.max(event.fetchMillis(), event.resultSetUseMillis()));
+		return observedDuration >= minimum && (text.isBlank() || searchable(event).contains(text));
 	}
 
 	private void updateMetrics() {

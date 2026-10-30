@@ -34,4 +34,18 @@ class SqlFingerprintTest {
 		assertEquals("select ?", SqlFingerprint.normalize("select $$a very long value$$"));
 	}
 
+	@Test
+	void normalizesArrayElementsWithoutChangingBracketIdentifiers() {
+		assertEquals("select array[?, ?], array [[?, ?], [?, ?]], [Order 42]",
+				SqlFingerprint.normalize("SELECT ARRAY[1, 2], ARRAY [[3, 4], [5, 6]], [Order 42]"));
+		assertEquals("select array[?, ?]", SqlFingerprint.normalize("select array['first', 'second']"));
+		assertEquals("select[123] from[Order 42]", SqlFingerprint.normalize("SELECT[123] FROM[Order 42]"));
+	}
+
+	@Test
+	void normalizesOracleAlternativeQuotedLiterals() {
+		assertEquals("select ?, ?, ?, ?, ?, ? from dual", SqlFingerprint.normalize(
+				"select q'[Bob's ?]', Q'{it's ?}', q'(it's ?)', q'<it's ?>', q'!it's ?!', nq'[it's ?]' from dual"));
+	}
+
 }

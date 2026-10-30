@@ -8,8 +8,10 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.lang.ref.WeakReference;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import javax.sql.DataSource;
 
 final class ExplainService {
@@ -19,6 +21,9 @@ final class ExplainService {
 	private static final int MAX_PLAN_ROWS = 10_000;
 
 	private static final int MAX_TARGETS = 10_000;
+
+	private static final Set<String> EXPLAINABLE_OPERATIONS = Set.of("select", "insert", "update", "delete", "merge",
+			"values", "table", "with");
 
 	private static final Map<String, Target> TARGETS = new LinkedHashMap<>(256, 0.75f, true);
 
@@ -57,11 +62,11 @@ final class ExplainService {
 		Connection connection = target.connection();
 		boolean borrowed = false;
 		try {
+			String sql = singleStatement(request.sql());
 			if (connection == null || connection.isClosed()) {
 				connection = open(target.source());
 				borrowed = true;
 			}
-			String sql = singleStatement(request.sql());
 			try (var statement = connection.createStatement()) {
 				configure(statement);
 				if (!statement.execute("EXPLAIN " + sql)) {
@@ -180,7 +185,7 @@ final class ExplainService {
 	}
 
 	private static String singleStatement(String sql) {
-		String result = sql.strip();
+		String result = stripLeadingComments(sql).strip();
 		if (result.endsWith(";")) {
 			result = result.substring(0, result.length() - 1).stripTrailing();
 		}
@@ -191,7 +196,52 @@ final class ExplainService {
 			throw new IllegalArgumentException(
 					"EXPLAIN is limited to one SQL statement; embedded semicolons are not accepted");
 		}
+		int wordEnd = 0;
+		while (wordEnd < result.length() && Character.isLetter(result.charAt(wordEnd))) {
+			wordEnd++;
+		}
+		if (!EXPLAINABLE_OPERATIONS.contains(result.substring(0, wordEnd).toLowerCase(Locale.ROOT))) {
+			throw new IllegalArgumentException("EXPLAIN requires a query or DML statement without EXPLAIN options");
+		}
 		return result;
+	}
+
+	private static String stripLeadingComments(String sql) {
+		int index = 0;
+		while (index < sql.length()) {
+			if (Character.isWhitespace(sql.charAt(index))) {
+				index++;
+			}
+			else if (sql.startsWith("--", index)) {
+				index += 2;
+				while (index < sql.length() && sql.charAt(index) != '\r' && sql.charAt(index) != '\n') {
+					index++;
+				}
+			}
+			else if (sql.startsWith("/*", index)) {
+				int depth = 1;
+				index += 2;
+				while (index < sql.length() && depth > 0) {
+					if (sql.startsWith("/*", index)) {
+						depth++;
+						index += 2;
+					}
+					else if (sql.startsWith("*/", index)) {
+						depth--;
+						index += 2;
+					}
+					else {
+						index++;
+					}
+				}
+			}
+			else {
+				break;
+			}
+		}
+		// Do not pass executable comments (for example, MySQL /*! ANALYZE */) to
+		// the server before the statement's first keyword.
+		return sql.substring(index);
 	}
 
 	private static TransportCodec.ExplainResponse success(ControlCodec.ExplainRequest request, String plan) {

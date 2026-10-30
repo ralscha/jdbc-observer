@@ -57,6 +57,9 @@ public record SqlEvent(long id, long parentId, long transactionId, Instant times
 
 	private static Map<Integer, String> snapshot(Map<Integer, String> source, String name) {
 		Objects.requireNonNull(source, name);
+		if (source.isEmpty()) {
+			return Map.of();
+		}
 		var result = new LinkedHashMap<Integer, String>();
 		for (var entry : source.entrySet()) {
 			var index = Objects.requireNonNull(entry.getKey(), name + " key");

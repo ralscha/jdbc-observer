@@ -44,6 +44,7 @@ class CartesianProductDetectorTest {
 		assertEquals(NONE, CartesianProductDetector.detect("select 'cross join', \"cross\" from customer"));
 		assertEquals(NONE, CartesianProductDetector.detect("select * from customer /* cross join country */"));
 		assertEquals(NONE, CartesianProductDetector.detect("select * from catalog.cross join country on true"));
+		assertEquals(NONE, CartesianProductDetector.detect("select q'[Bob's cross join country]' from dual"));
 	}
 
 	@Test

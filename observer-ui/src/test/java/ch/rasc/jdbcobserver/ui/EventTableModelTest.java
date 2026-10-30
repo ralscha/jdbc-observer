@@ -53,6 +53,28 @@ class EventTableModelTest {
 	}
 
 	@Test
+	void mergesResultSetsAfterHistoryEvictionAndClearing() {
+		var model = new EventTableModel(2);
+		model.addAll(
+				java.util.List.of(event(1, "select ?", true), event(2, "select ?", true), event(3, "select ?", true)));
+		model.add(resultSetEvent(4, 2, 7, true));
+		model.add(resultSetEvent(5, 3, 3, true));
+		assertEquals(2, model.getRowCount());
+		assertEquals(7, model.get(0).rows());
+		assertEquals(3, model.get(1).rows());
+
+		model.add(resultSetEvent(6, 1, 4, true));
+		assertEquals(SqlEvent.Kind.RESULT_SET, model.get(1).kind());
+		assertEquals(7, model.observedRowCount());
+
+		model.clear();
+		model.add(event(2, "select ?", true));
+		model.add(resultSetEvent(7, 2, 11, true));
+		assertEquals(1, model.getRowCount());
+		assertEquals(11, model.get(0).rows());
+	}
+
+	@Test
 	void accumulatesMultipleResultSetsAndPreservesUpdateCountsWhenReadingGeneratedKeys() {
 		var model = new EventTableModel(10);
 		model.add(event(1, "select ?", true));
